@@ -134,3 +134,40 @@ Answer: both api versions work with the installed `google-genai`, for minting an
 ## web
 
 ## slack
+Files: `backend/counter_backend/slack_bridge.py`, `backend/tests/test_slack_bridge.py`, `backend/scripts/slack_smoke.py`, `slack/manifest.yaml`, `slack/README.md`.
+
+### How to set it up and run it
+1. Create the Slack app from `slack/manifest.yaml` (api.slack.com → Create New App → From an app manifest), install it, generate an app-level token with `connections:write`, create `#counter-approvals` and `/invite @Counter`. Full steps in `slack/README.md`.
+2. Put `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_CHANNEL` in `~/.config/counter/.env`.
+3. Unit tests (fake Slack client, no network):
+   `uv run --with slack_bolt --with slack_sdk --with aiohttp --with pytest --with pytest-asyncio pytest backend/tests/test_slack_bridge.py`
+4. Live smoke test (posts a fake hold card, waits for a click, prints the result):
+   `uv run --with slack_bolt --with slack_sdk --with aiohttp --with python-dotenv python backend/scripts/slack_smoke.py`
+
+### What was run (2026-10-17)
+`uv run --with slack_bolt --with slack_sdk --with aiohttp --with pytest --with pytest-asyncio pytest backend/tests/test_slack_bridge.py -v`:
+```
+collected 12 items
+
+backend/tests/test_slack_bridge.py::test_start_is_a_noop_without_tokens PASSED
+backend/tests/test_slack_bridge.py::test_start_is_a_noop_without_channel PASSED
+backend/tests/test_slack_bridge.py::test_registers_both_button_handlers PASSED
+backend/tests/test_slack_bridge.py::test_post_hold_card_shape_and_still PASSED
+backend/tests/test_slack_bridge.py::test_post_hold_without_still_skips_upload PASSED
+backend/tests/test_slack_bridge.py::test_approve_click_calls_callback_once_and_swaps_buttons PASSED
+backend/tests/test_slack_bridge.py::test_second_click_after_outcome_does_nothing PASSED
+backend/tests/test_slack_bridge.py::test_double_click_while_first_is_in_flight_runs_the_action_once PASSED
+backend/tests/test_slack_bridge.py::test_click_when_backend_says_already_handled PASSED
+backend/tests/test_slack_bridge.py::test_users_info_failure_falls_back_to_owner PASSED
+backend/tests/test_slack_bridge.py::test_reject_click_calls_callback_and_updates_card PASSED
+backend/tests/test_slack_bridge.py::test_post_block_line PASSED
+
+12 passed in 0.29s
+```
+
+The Slack app does not exist yet, so the live card click is still open. The smoke script was run in both states that exist now:
+- No tokens in `~/.config/counter/.env` (checked without printing values): prints "Slack smoke test not run: SLACK_BOT_TOKEN, SLACK_APP_TOKEN and SLACK_CHANNEL are not in /Users/tayyabkhan/.config/counter/.env yet." and exits 1.
+- With a throwaway fake app token: connects fail with `invalid_auth` (slack_sdk's own retry log), then prints "Could not connect over Socket Mode, so button clicks would not arrive. Check SLACK_APP_TOKEN ..." and exits 1.
+- With real tokens the card posts and the wait-for-click path runs; that is the next check once the app is created.
+
+Notes: `SlackBridge` matches CONTRACTS 4 (start / post_hold / post_block / update_hold). It adds one keyword-only `client` parameter so tests can inject a fake Slack client; no contract change. The approve click calls `on_approve` once, `users.info` gives the real name (fallback "Owner"), and the card ends as "Approved once by <name> · <result status>" / "Rejected by <name>" / "Already handled"; double clicks (including two clicks racing) never run the action twice. Tokens are never logged.
