@@ -4,11 +4,18 @@
     uv run --python 3.12 --with playwright --with python-dotenv python web/check_web.py [--live]
 
 Part 1 (always): ?mock=1 replays the six beats; screenshots land in web/shots/.
+Part 1b (always): owner login on the call screen (/?role=owner): wrong password
+                  shows an error, the right one gives the owner badge, and the
+                  beat 6 tool is allowed by ArmorIQ in that session.
 Part 2 (always): owner console login, pending card, Approve once.
 Part 3 (--live):   a real Gemini Live session: token, typed turn, audio, transcript,
                    tool call reaching /api/tool, and a v1beta-vs-v1alpha token probe.
 
-Assumes the stub is already running on $CHECK_BASE (default http://127.0.0.1:8100).
+    ... python web/check_web.py --base http://127.0.0.1:8000     # real backend
+    ... python web/check_web.py --base https://counter-xyz.run.app --live
+
+Assumes the stub is already running on $CHECK_BASE (default http://127.0.0.1:8100),
+or pass --base with whatever serves web/ and /api on one origin.
 Never prints secret values.
 """
 
@@ -176,6 +183,92 @@ async def run_mock(pw, console_lines: list[str]):
     # the page log, written next to the shots for the record
     logs = await page.evaluate("window.__counter.state.logs")
     (SHOTS / "mock-page-log.txt").write_text("\n".join(logs))
+    await ctx.close()
+    await browser.close()
+
+
+async def run_owner_login(pw, console_lines: list[str]):
+    """Part 1b: the owner login on the call screen (/?role=owner)."""
+    print("\n1b. owner login from the call screen (/?role=owner)", flush=True)
+    password = os.environ.get("OWNER_PASSWORD", "")
+    if not password:
+        fail("OWNER_PASSWORD is not set; cannot test the owner login")
+        return
+    browser = await pw.chromium.launch(args=ARGS)
+    ctx = await browser.new_context(viewport={"width": 1920, "height": 1080},
+                                    permissions=["microphone", "camera"])
+    page = await ctx.new_page()
+    page.on("pageerror", lambda e: console_lines.append(f"owner-login pageerror: {e}"))
+    page.on("console", lambda m: console_lines.append(f"owner-login console.{m.type}: {m.text}")
+            if m.type == "error" else None)
+
+    await page.goto(BASE + "/?role=owner", wait_until="domcontentloaded")
+    await page.wait_for_selector("#ownerLogin:not([hidden])", timeout=15000)
+    note("password form shown before any session")
+
+    # 1. wrong password -> error on screen, no session
+    await page.fill("#ownerPw", password + "-nope")
+    await page.click("#ownerGo")
+    try:
+        await page.wait_for_function(
+            "document.querySelector('#ownerErr').textContent.trim() !== ''", timeout=15000)
+    except Exception:
+        fail("wrong owner password produced no error message")
+    err = await text_of(page, "#ownerErr")
+    if "wrong password" in err.lower():
+        note(f"wrong password: error on screen ({err!r})")
+    else:
+        fail(f"wrong password: unexpected error text {err!r}")
+    if await page.evaluate("window.__counter && window.__counter.state.sid"):
+        fail("wrong password still started a session")
+    else:
+        note("wrong password: no session started")
+    await shot(page, "owner-login-1-wrong.png")
+
+    # 2. right password -> owner badge
+    await page.fill("#ownerPw", password)
+    await page.click("#ownerGo")
+    try:
+        await page.wait_for_function("window.__counter && window.__counter.state.sid", timeout=30000)
+    except Exception:
+        fail("owner login did not start a session")
+        await ctx.close(); await browser.close()
+        return
+    await page.wait_for_function("document.querySelector('#ownerLogin').hidden === true", timeout=15000)
+    badge = await text_of(page, "#whoLabel")
+    if badge == "owner \u00b7 Sam":
+        note(f"owner badge on screen: {badge}")
+    else:
+        fail(f"owner badge wrong: {badge!r}")
+
+    # 3. beat 6 tool through that session: match_competitor_quote 420 -> allow
+    result = await page.evaluate("""async () => {
+        const r = await fetch('api/tool', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: window.__counter.state.sid,
+                                  name: 'match_competitor_quote',
+                                  args: {competitor: 'GadgetCash', amount: 420}, camera_on: true})});
+        const body = await r.json().catch(() => ({}));
+        const d = body.decision || {};
+        return {status: r.status, layer: d.layer, action: d.action, reason: d.reason,
+                tool_response: body.response || null};
+    }""")
+    allowed = (result["status"] == 200 and result["layer"] == "ARMORIQ"
+               and result["action"] == "allow"
+               and (result["tool_response"] or {}).get("status") == "matched")
+    if allowed:
+        note("beat 6 tool allowed in the owner session "
+             "(match_competitor_quote 420 -> ARMORIQ allow -> matched)")
+    else:
+        fail(f"owner session beat 6 tool: {json.dumps(result)[:220]}")
+    try:
+        await page.wait_for_function(
+            "window.__counter.state.decisions.some("
+            "d => d.tool === 'match_competitor_quote' && d.action === 'allow')", timeout=15000)
+        note("owner decision on the Decisions rail (ARMORIQ ALLOW)")
+    except Exception:
+        fail("owner decision did not reach the rail")
+    await page.wait_for_timeout(400)
+    await shot(page, "owner-login-2-allowed.png")
     await ctx.close()
     await browser.close()
 
@@ -423,10 +516,19 @@ async def main():
     ap.add_argument("--real", type=int, metavar="PORT",
                     help="drive the page against the real backend on this port "
                          "(web/ is served from a local proxy that streams /api to it)")
+    ap.add_argument("--base", metavar="URL",
+                    help="target this origin, e.g. the deployed backend; web/ and /api "
+                         "must be served from it (default: $CHECK_BASE or the stub on :8100)")
     ap.add_argument("--proxy-port", type=int, default=8102)
     a = ap.parse_args()
 
-    if a.real:
+    if a.real and a.base:
+        ap.error("--real and --base are mutually exclusive")
+
+    if a.base:
+        BASE = a.base.rstrip("/")
+        print(f"target {BASE} (web/ and /api from the same origin)", flush=True)
+    elif a.real:
         start_proxy(a.real, a.proxy_port)
         BASE = f"http://127.0.0.1:{a.proxy_port}"
         print(f"proxy on {BASE} -> real backend http://127.0.0.1:{a.real}, files from {HERE}", flush=True)
@@ -438,13 +540,14 @@ async def main():
     except Exception:
         urlopen_ok = False
     if not urlopen_ok:
-        print(f"stub is not answering on {BASE}; start web/dev_stub.py first")
+        print(f"no healthy backend on {BASE} (start web/dev_stub.py, or pass --base/--real)", flush=True)
         return 2
 
     console_lines: list[str] = []
     async with async_playwright() as pw:
         if not a.only_live and not a.probe_only:
             await run_mock(pw, console_lines)
+            await run_owner_login(pw, console_lines)
         if a.live or a.only_live:
             await run_live(pw, console_lines)
         if a.probe_only:
