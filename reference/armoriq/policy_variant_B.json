@@ -1,0 +1,50 @@
+{
+ "apiVersion": "armor.io/v1",
+ "kind": "Policy",
+ "metadata": {
+  "name": "counter-policy",
+  "orgId": "61ed3f02-0a66-42d2-8ba8-31f656a417f3",
+  "targetType": "agent",
+  "targetId": "0a2b03fd-f218-4742-b44f-e4338aada00c"
+ },
+ "spec": {
+  "priority": 100,
+  "defaultEnforcementAction": "block",
+  "memberRules": {
+   "*": {
+    "allowedTools": [
+     "lookup_price",
+     "get_order",
+     "record_inspection",
+     "notify_customer_on_file",
+     "page_owner",
+     "issue_payout",
+     "issue_refund",
+     "process_exchange"
+    ],
+    "enforcementAction": "allow_log",
+    "amountThreshold": {
+     "requireApprovalAbove": 100,
+     "maxPerTransaction": 350,
+     "currency": "USD"
+    }
+   },
+   "<LOGIN_EMAIL>": {
+    "allowedTools": [
+     "lookup_price",
+     "get_order",
+     "record_inspection",
+     "notify_customer_on_file",
+     "page_owner",
+     "issue_payout",
+     "issue_refund",
+     "process_exchange",
+     "match_competitor_quote",
+     "waive_lock_check",
+     "refund_to_account"
+    ],
+    "enforcementAction": "allow"
+   }
+  }
+ }
+}

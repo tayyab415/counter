@@ -1,0 +1,11 @@
+   mint plan 5dd15169 allowed_tools 8 denied []
+   [VB] counter match_competitor_quote 170 -> block / tool_not_in_allowlist deleg=-  870ms PASS
+   [VB] counter refund_to_account 170 -> block / tool_not_in_allowlist deleg=-  818ms PASS
+   [VB] counter waive_lock_check 170 -> block / tool_not_in_allowlist deleg=-  805ms PASS
+   [VB] counter match_competitor_quote 420 -> block / tool_not_in_allowlist deleg=-  861ms PASS
+   [VB] counter issue_refund 45 -> allow / allow_with_logging deleg=-  989ms PASS
+   [VB] counter lookup_price  -> allow / allow_with_logging deleg=-  813ms PASS
+   [VB] counter process_exchange 170 -> hold / amount_requires_approval deleg=3beff8ec dreq: 201 pending Delegation request created. Awaiting approval from senior officer. 1906ms PASS
+   reject 3beff8ec 201
+   mint plan 27d2cc0d allowed_tools 11 denied []
+   [VB] owner match_competitor_quote 420 -> allow / enforcement_passed deleg=-  977ms PASS

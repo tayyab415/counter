@@ -1,0 +1,214 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Counter: interface sketch</title>
+<style>
+:root{--s-bg:#0b0d10;--s-panel:#161a20;--s-panel2:#1e232b;--s-line:#2b323c;--s-text:#ebe8e3;--s-mute:#98a0aa;--allow:#2fbf71;--hold:#f0a63a;--block:#e5484d;--rule:#8b929c;--blue:#6f9cff}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}
+.wrap{display:flex;flex-direction:column;gap:22px}
+.top{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between}
+.loop{display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.loop span{border:1px solid var(--border,#333);padding:3px 9px;border-radius:999px}
+.loop i{opacity:.55;font-style:normal}
+.toggle{display:inline-flex;border:1px solid var(--border,#333);border-radius:8px;overflow:hidden;font-size:12.5px}
+.toggle button{background:transparent;color:var(--muted-foreground,#999);border:0;padding:5px 12px;font:inherit;cursor:pointer}
+.toggle button.on{background:var(--secondary,#222);color:var(--foreground,#eee)}
+.scene h2{font-size:14.5px;margin:0 0 3px}
+.scene p{margin:0 0 9px;font-size:13px;color:var(--muted-foreground,#999);line-height:1.45}
+.fit{position:relative;width:100%;overflow:hidden;border-radius:var(--radius,12px)}
+.screen{position:absolute;left:0;top:0;transform-origin:0 0;width:1040px;height:585px;background:var(--s-bg);color:var(--s-text);display:grid;grid-template-columns:1fr 320px;font-size:15px;line-height:1.35;padding:16px;gap:16px}
+.stage{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0}
+.big{position:relative;flex:1;border-radius:12px;overflow:hidden;background:var(--s-panel)}
+.pip{position:absolute;right:14px;top:14px;width:200px;height:126px;border-radius:10px;overflow:hidden;border:1px solid var(--s-line);box-shadow:0 8px 24px #000a;z-index:3}
+.label{position:absolute;left:10px;bottom:8px;font-size:12px;background:#000a;padding:2px 8px;border-radius:6px;z-index:2}
+/* agent tile */
+.agent{position:absolute;inset:0;display:grid;place-items:center;background:radial-gradient(circle at 50% 45%,#1c2637,#10141a 72%)}
+.orb{width:34%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 36% 30%,#d2e0ff,#6f9cff 42%,#2b4486 78%);box-shadow:0 0 70px #5a85ee55;animation:talk .8s ease-in-out infinite}
+.orb::after{content:"";position:absolute}
+.quiet .orb{animation:breathe 3.2s ease-in-out infinite}
+@keyframes talk{0%,100%{transform:scale(1)}25%{transform:scale(1.07)}55%{transform:scale(.96)}80%{transform:scale(1.04)}}
+@keyframes breathe{0%,100%{transform:scale(.97);opacity:.85}50%{transform:scale(1.02);opacity:1}}
+.facesvg{width:40%;display:none}
+.face .facesvg{display:block}.face .orb{display:none}
+.mouth{transform-box:fill-box;transform-origin:center;animation:mouth .32s ease-in-out infinite alternate}
+.quiet .mouth{animation:none;transform:scaleY(.35)}
+@keyframes mouth{from{transform:scaleY(.3)}to{transform:scaleY(1)}}
+.eyes{transform-box:fill-box;transform-origin:center;animation:blink 4s infinite}
+@keyframes blink{0%,94%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
+/* camera placeholders */
+.cam{position:absolute;inset:0;background:linear-gradient(160deg,#3a3229,#231d17 60%,#17130f)}
+.person .head{position:absolute;left:50%;top:22%;width:24%;aspect-ratio:1;transform:translateX(-50%);border-radius:50%;background:#7b6a5c}
+.person .body{position:absolute;left:50%;top:58%;width:62%;height:60%;transform:translateX(-50%);border-radius:45% 45% 0 0;background:#3d4f63}
+.held{position:absolute;left:50%;top:52%;width:21%;height:34%;transform:translate(-50%,0) rotate(-6deg);border-radius:8px;background:#222;border:2px solid #555}
+.phonecam{position:absolute;left:50%;top:50%;width:240px;height:330px;transform:translate(-50%,-46%) rotate(-4deg);border-radius:28px;background:#111;border:3px solid #4a4a4a;padding:22px 14px;box-shadow:0 20px 40px #000c}
+.phonecam .scr{background:#f3f3f5;color:#111;border-radius:12px;height:100%;padding:10px;font-size:11px}
+.phonecam .scr b{display:block;font-size:13px;margin-bottom:8px}
+.phonecam .r{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding:5px 0}
+.phonecam .r span:last-child{color:#666}
+.hl{background:#ffe48a;color:#111!important;border-radius:3px;padding:0 2px}
+.guide{position:absolute;left:50%;top:50%;width:300px;height:390px;transform:translate(-50%,-50%);border:2px dashed #ffffffaa;border-radius:20px}
+.prompt{position:absolute;left:14px;top:14px;background:#000b;border:1px solid #fff3;padding:6px 14px;border-radius:999px;font-size:13.5px;white-space:nowrap;z-index:2}
+.snap{position:absolute;left:14px;bottom:42px;width:92px;height:120px;border-radius:8px;border:2px solid #fff;background:linear-gradient(160deg,#3a3229,#17130f);overflow:hidden;box-shadow:0 6px 16px #000a}
+.snap::before{content:"";position:absolute;left:28%;top:12%;width:44%;height:76%;background:#f3f3f5;border-radius:6px;border:3px solid #111}
+.snap span{position:absolute;bottom:0;left:0;right:0;background:#000c;font-size:10px;text-align:center;padding:1px}
+/* captions + inputs */
+.caption{background:var(--s-panel);border:1px solid var(--s-line);border-radius:10px;padding:10px 12px;font-size:15.5px}
+.caption b{color:var(--blue);margin-right:6px}
+.caption .you{color:var(--s-mute)}
+.chips{display:flex;gap:7px;flex-wrap:wrap}
+.chips span{border:1px solid var(--s-line);background:var(--s-panel2);border-radius:999px;padding:5px 12px;font-size:13.5px}
+.input{display:flex;align-items:center;gap:10px;border:1px solid var(--s-line);border-radius:10px;padding:8px 12px;color:var(--s-mute);font-size:14px}
+.mic{width:22px;height:22px;border-radius:50%;background:var(--blue);display:grid;place-items:center;flex:none}
+.mic::after{content:"";width:6px;height:10px;border-radius:3px;background:#fff}
+.wave{margin-left:auto;display:flex;gap:2px;align-items:center}
+.wave i{width:3px;background:var(--s-mute);border-radius:2px;height:6px}
+.wave i:nth-child(2n){height:12px}.wave i:nth-child(3n){height:9px}
+.waiting{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:#2a2110;border:1px solid var(--hold);color:#ffd9a0;border-radius:10px;padding:8px 14px;font-size:14px;display:flex;gap:10px;align-items:center;z-index:2;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--hold);animation:breathe 1.2s infinite}
+/* console */
+.console{background:var(--s-panel);border:1px solid var(--s-line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.chead{font-size:13px;color:var(--s-mute);display:flex;justify-content:space-between}
+.chead b{color:var(--s-text)}
+.case{background:var(--s-panel2);border-radius:10px;padding:11px 12px;font-size:13.5px}
+.case h3{margin:0 0 6px;font-size:14px}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+.kv span:first-child{color:var(--s-mute)}
+.bad{color:#ff8a8d}.ok{color:#7be0a6}
+.empty{color:var(--s-mute);font-size:13px}
+.rail{display:flex;flex-direction:column;gap:7px;margin-top:auto}
+.rail h4{margin:0;font-size:12px;color:var(--s-mute);font-weight:500;text-transform:uppercase;letter-spacing:.06em}
+.ev{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;align-items:center;font-size:12.5px;background:#0f1216;border-radius:8px;padding:6px 8px}
+.ev code{font-family:var(--font-mono,ui-monospace,Menlo,monospace);font-size:12px}
+.ev small{grid-column:2;color:var(--s-mute);font-size:11.5px}
+.chip{font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:2px 6px;border-radius:5px;color:#08130c;white-space:nowrap}
+.allow{background:var(--allow)}.hold{background:var(--hold);color:#1d1203}.block{background:var(--block);color:#fff}.rule{background:#3a4049;color:#d6dae0;border:1px solid var(--rule)}
+/* owner phone */
+.ownerrow{display:flex;gap:18px;align-items:flex-start;margin-top:14px;flex-wrap:wrap}
+.phone{width:200px;flex:none;background:#0b0d10;color:var(--s-text);border:1px solid #333;border-radius:26px;padding:14px 11px 16px;font-size:11.5px}
+.notch{width:70px;height:6px;border-radius:3px;background:#333;margin:0 auto 12px}
+.ntf{background:#20252d;border-radius:12px;padding:8px 10px;margin-bottom:10px}
+.ntf small{color:var(--s-mute);display:block;font-size:10.5px}
+.appr{background:#161a20;border-radius:12px;padding:10px}
+.appr .frame{height:70px;border-radius:8px;background:linear-gradient(160deg,#3a3229,#17130f);position:relative;margin-bottom:8px;overflow:hidden}
+.appr .frame::before{content:"";position:absolute;left:36%;top:22%;width:28%;height:56%;background:#2c2c2c;border-radius:30% 30% 40% 40%;border:2px solid #555}
+.btns{display:flex;gap:6px;margin-top:9px}
+.btns span{flex:1;text-align:center;padding:7px;border-radius:8px;font-weight:600}
+.ap{background:var(--allow);color:#06120a}.rj{background:#2b313a}
+.side{flex:1;min-width:240px;font-size:13px;line-height:1.5;color:var(--muted-foreground,#999)}
+.side b{color:var(--foreground,#eee)}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="loop"><span>Ask</span><i>→</i><span>Show</span><i>→</i><span>Read</span><i>→</i><span>Confirm</span><i>→</i><span>Act</span><i>→</i><span>Result</span></div>
+    <div class="toggle"><button class="on" data-m="orb">Agent as orb</button><button data-m="face">Agent as face</button></div>
+  </div>
+
+  <div class="scene">
+    <h2>1 · The call</h2>
+    <p>It opens like a video call: the agent is the big tile, you're the small one. It talks, and you can answer by voice, by tapping a chip, or by typing.</p>
+    <div class="fit"><div class="screen">
+      <div class="stage">
+        <div class="big"><div class="agent"><div class="orb"></div>
+          <svg class="facesvg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="80" fill="#2c3649"/><g class="eyes"><ellipse cx="72" cy="88" rx="8" ry="11" fill="#ebe8e3"/><ellipse cx="128" cy="88" rx="8" ry="11" fill="#ebe8e3"/></g><ellipse class="mouth" cx="100" cy="136" rx="22" ry="10" fill="#ebe8e3"/></svg>
+        </div><span class="label">Counter · speaking</span></div>
+        <div class="pip"><div class="cam person"><div class="head"></div><div class="body"></div></div><span class="label">You</span></div>
+        <div class="caption"><b>Counter</b>Hi, I'm Counter. Are you here for a trade-in, a return, an exchange, or a repair?</div>
+        <div class="chips"><span>Trade-in</span><span>Return</span><span>Exchange</span><span>Repair</span><span>Talk to a person</span></div>
+        <div class="input"><div class="mic"></div>Say it, or type here…<div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+      </div>
+      <aside class="console">
+        <div class="chead"><b>Shop console</b><span>acting as counter@shop</span></div>
+        <div class="case"><h3>No case yet</h3><div class="empty">A case card fills in as the agent reads things off the camera.</div></div>
+        <div class="rail"><h4>Decisions</h4><div class="empty">No tool calls yet.</div></div>
+      </aside>
+    </div></div>
+  </div>
+
+  <div class="scene">
+    <h2>2 · "Show me"</h2>
+    <p>When the agent needs evidence, the tiles swap: your camera goes big, with a guide frame and an instruction. The app grabs a full-resolution still, which then sits in the case card. In this scene a shop rule refuses the refund, so ArmorIQ is never asked.</p>
+    <div class="fit"><div class="screen">
+      <div class="stage">
+        <div class="big"><div class="cam"></div>
+          <div class="prompt">Hold up the phone with Settings › General › About open</div>
+          <div class="guide"></div>
+          <div class="phonecam"><div class="scr"><b>About</b>
+            <div class="r"><span>Model Name</span><span>iPhone 15</span></div>
+            <div class="r"><span>Capacity</span><span>128 GB</span></div>
+            <div class="r"><span>Serial Number</span><span class="hl">F2LXK9…7QK2</span></div>
+            <div class="r"><span>Find My</span><span>Off</span></div></div></div>
+          <div class="snap"><span>captured</span></div>
+          <span class="label">You</span></div>
+        <div class="pip"><div class="agent"><div class="orb"></div>
+          <svg class="facesvg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="80" fill="#2c3649"/><g class="eyes"><ellipse cx="72" cy="88" rx="8" ry="11" fill="#ebe8e3"/><ellipse cx="128" cy="88" rx="8" ry="11" fill="#ebe8e3"/></g><ellipse class="mouth" cx="100" cy="136" rx="22" ry="10" fill="#ebe8e3"/></svg>
+        </div><span class="label">Counter</span></div>
+        <div class="caption"><b>Counter</b>This phone's serial ends in 7QK2, but your receipt is for one ending in 4MD9. So I can't take it back on this order.</div>
+        <div class="chips"><span>Show it again</span><span>I have another receipt</span><span>Talk to a person</span></div>
+        <div class="input"><div class="mic"></div>Say it, or type here…</div>
+      </div>
+      <aside class="console">
+        <div class="chead"><b>Shop console</b><span>acting as counter@shop</span></div>
+        <div class="case"><h3>Return · order #1042</h3>
+          <div class="kv"><span>Item</span><span>iPhone 15 128 GB</span></div>
+          <div class="kv"><span>Paid</span><span>$799 · Visa ••42</span></div>
+          <div class="kv"><span>Serial on order</span><span>…4MD9</span></div>
+          <div class="kv"><span>Serial on camera</span><span class="bad">…7QK2 ✗</span></div>
+          <div class="kv"><span>Evidence</span><span>receipt ✓ · device ✓</span></div></div>
+        <div class="rail"><h4>Decisions</h4>
+          <div class="ev"><span class="chip allow">ARMORIQ ALLOW</span><code>get_order</code><small>0.8 s</small></div>
+          <div class="ev"><span class="chip allow">ARMORIQ ALLOW</span><code>record_inspection</code><small>0.7 s</small></div>
+          <div class="ev"><span class="chip rule">SHOP RULE</span><code>issue_refund</code><small>serial doesn't match the order · ArmorIQ not asked</small></div>
+        </div>
+      </aside>
+    </div></div>
+  </div>
+
+  <div class="scene">
+    <h2>3 · Blocked, then waiting for the owner</h2>
+    <p>The first move was blocked, and the agent offered the allowed options as chips. The upgrade with a gap needs the owner, so the stage shows a "waiting" card. That card is built from the tool result, not from what the model says, so it can't say "done" while the action is still on hold.</p>
+    <div class="fit"><div class="screen quiet">
+      <div class="stage">
+        <div class="big"><div class="agent"><div class="orb"></div>
+          <svg class="facesvg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="80" fill="#2c3649"/><g class="eyes"><ellipse cx="72" cy="88" rx="8" ry="11" fill="#ebe8e3"/><ellipse cx="128" cy="88" rx="8" ry="11" fill="#ebe8e3"/></g><ellipse class="mouth" cx="100" cy="136" rx="22" ry="10" fill="#ebe8e3"/></svg>
+        </div>
+          <div class="waiting"><span class="dot"></span>Waiting for the owner · exchange, $170 gap · 0:38</div>
+          <span class="label">Counter · listening</span></div>
+        <div class="pip"><div class="cam person"><div class="head"></div><div class="body"></div><div class="held"></div></div><span class="label">You</span></div>
+        <div class="caption"><span class="you">You: "Fine, then swap it for the Pro Elite."</span><br><b>Counter</b>The Pro Elite is $170 more than the controller you're returning, so the owner has to OK that. I've sent it over.</div>
+        <div class="chips"><span>I'll wait</span><span>Pay the $170 instead</span><span>Cancel</span></div>
+        <div class="input"><div class="mic"></div>Say it, or type here…</div>
+      </div>
+      <aside class="console">
+        <div class="chead"><b>Shop console</b><span>acting as counter@shop</span></div>
+        <div class="case"><h3>Exchange · order #1077</h3>
+          <div class="kv"><span>Returning</span><span>Controller · $120</span></div>
+          <div class="kv"><span>Wants</span><span>Pro Elite · $290</span></div>
+          <div class="kv"><span>Unpaid gap</span><span class="bad">$170</span></div>
+          <div class="kv"><span>Serial check</span><span class="ok">matches ✓</span></div></div>
+        <div class="rail"><h4>Decisions</h4>
+          <div class="ev"><span class="chip allow">ARMORIQ ALLOW</span><code>get_order</code><small>0.8 s</small></div>
+          <div class="ev"><span class="chip block">ARMORIQ BLOCK</span><code>refund_to_account</code><small>"send it to my husband's card" · tool blocked for counter</small></div>
+          <div class="ev"><span class="chip allow">ARMORIQ ALLOW</span><code>record_inspection</code><small>0.7 s</small></div>
+          <div class="ev"><span class="chip hold">ARMORIQ HOLD</span><code>process_exchange · amount 170</code><small>amount_requires_approval · owner paged</small></div>
+        </div>
+      </aside>
+    </div></div>
+    <div class="ownerrow">
+      <div class="phone"><div class="notch"></div>
+        <div class="ntf"><small>ntfy · now</small><b>Counter needs approval</b><br>Exchange with a $170 gap</div>
+        <div class="appr"><div class="frame"></div>
+          <div class="kv"><span>Tool</span><span>process_exchange</span></div>
+          <div class="kv"><span>Amount</span><span>$170</span></div>
+          <div class="kv"><span>Order</span><span>#1077</span></div>
+          <div class="btns"><span class="ap">Approve</span><span class="rj">Reject</span></div></div>
+      </div>
+      <div class="side"><b>The owner's phone.</b> The owner gets a push notification and opens a page with the camera still, the tool and the amount. Approve runs this exact stored action once. The screen behind it then flips to "Done, exchanged", again built from the tool result.<br><br><b>In the video</b>, this phone appears as an inset for about 5 seconds.</div>
+    </div>
+  </div>
+</div>
+<script>
+function fit(){document.querySelectorAll('.fit').forEach(w=>{const s=w.clientWidth/1040;w.firstElementChild.style.transform='scale('+s+')';w.style.height=(585*s)+'px'})}
+addEventListener('resize',fit);fit();
+document.querySelectorAll('.toggle button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.toggle button').forEach(x=>x.classList.toggle('on',x===b));document.body.classList.toggle('face',b.dataset.m==='face')});
+</script>
+</body></html>

@@ -1,0 +1,32 @@
+G1 approve a hold on toolEnforcement-blocked tools (policy A)
+   mint plan a18df46d allowed_tools 11 denied []
+   [G1] nonmember-E match_competitor_quote 170 -> hold / amount_requires_approval deleg=c4638eda dreq: 201 pending Delegation request created. Awaiting approval from senior officer. 1817ms 
+   approve -> 201 Delegation approved. The original requester can now execute the tool.
+   [G1] nonmember-E match_competitor_quote 170 -> allow / approved_delegation deleg=-  898ms 
+   [G1] nonmember-E match_competitor_quote 170 -> hold / amount_requires_approval deleg=7b3a44cb dreq: 201 pending Delegation request created. Awaiting approval from senior officer. 1785ms 
+   [G1] nonmember-E waive_lock_check 170 -> hold / amount_requires_approval deleg=890a708a dreq: 201 pending Delegation request created. Awaiting approval from senior officer. 1881ms 
+   approve -> 201 Delegation approved. The original requester can now execute the tool.
+   [G1] nonmember-E waive_lock_check 170 -> allow / approved_delegation deleg=-  906ms 
+   [G1] nonmember-E waive_lock_check 170 -> hold / amount_requires_approval deleg=5e8286af dreq: 201 pending Delegation request created. Awaiting approval from senior officer. 1729ms 
+   reject 5e8286af 201
+   reject 7b3a44cb 201
+import import-variant-B 201 40cc3094-ac0c-492f-b3c1-bd05ba6aeb71
+   stored status active * allowedTools 8 toolEnforcement None
+G2 variant B, non-member F
+   mint plan 55a66d48 allowed_tools 8 denied []
+   [G2] nonmember-F match_competitor_quote  -> block / tool_not_in_allowlist deleg=-  830ms 
+   [G2] nonmember-F match_competitor_quote 170 -> block / tool_not_in_allowlist deleg=-  800ms 
+   [G2] nonmember-F refund_to_account 45 -> block / tool_not_in_allowlist deleg=-  804ms 
+   [G2] nonmember-F refund_to_account 170 -> block / tool_not_in_allowlist deleg=-  808ms 
+   [G2] nonmember-F waive_lock_check 170 -> block / tool_not_in_allowlist deleg=-  789ms 
+   [G2] nonmember-F issue_payout 45 -> allow / allow_with_logging deleg=-  818ms 
+   [G2] nonmember-F issue_payout 170 -> hold / amount_requires_approval deleg=fec4583b dreq: 201 pending Delegation request created. Awaiting approval from senior officer. 1779ms 
+   [G2] nonmember-F lookup_price  -> allow / allow_with_logging deleg=-  787ms 
+   reject fec4583b 201
+G2 admin under variant B
+   mint plan 95b85576 allowed_tools 11 denied []
+   [G2] admin match_competitor_quote 170 -> allow / enforcement_passed deleg=-  889ms 
+   [G2] admin refund_to_account 45 -> allow / enforcement_passed deleg=-  999ms 
+import restore-variant-A 201 40cc3094-ac0c-492f-b3c1-bd05ba6aeb71
+   stored status active * allowedTools 11 toolEnforcement {'waive_lock_check': 'block', 'refund_to_account': 'block', 'match_competitor_quote': 'block'}
+leftover pending: 0
