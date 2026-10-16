@@ -344,7 +344,7 @@ class SlackBridge:
         except Exception:
             logger.exception("slack: could not update the hold card for %s", pending_id)
         else:
-            logger.info("slack: hold card updated for %s", pending_id)
+            logger.info("slack: hold card updated for %s: %s", pending_id, outcome)
 
     async def _note_in_thread(self, pending_id: str, text: str) -> None:
         hold = self._holds.get(pending_id)

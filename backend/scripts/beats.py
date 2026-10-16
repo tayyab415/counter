@@ -8,6 +8,8 @@ beat against the expectations in PROGRESS.md "Done conditions -> core".
 Any delegation the run leaves pending is rejected at the end.
 
 Usage: uv run python scripts/beats.py        (from backend/)
+       COUNTER_BACKEND=https://... uv run python scripts/beats.py   (deployed backend;
+       the local MCP check is skipped, the MCP server runs inside that backend)
 Exit code 0 when every beat passes, 1 otherwise.
 """
 from __future__ import annotations
@@ -17,6 +19,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
@@ -48,7 +51,12 @@ class Driver:
         sys.exit(2)
 
     def check_services(self) -> None:
-        for name, url in [("backend", f"{BACKEND}/api/healthz"), ("mcp", "http://127.0.0.1:8001/healthz")]:
+        checks = [("backend", f"{BACKEND}/api/healthz")]
+        if urlparse(BACKEND).hostname in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+            checks.append(("mcp", "http://127.0.0.1:8001/healthz"))
+        else:
+            print(f"remote backend: skipping the local MCP check (the MCP server runs inside {BACKEND})")
+        for name, url in checks:
             try:
                 r = self.client.get(url, timeout=5)
                 if r.status_code != 200:

@@ -378,6 +378,21 @@ async def test_reject_click_calls_callback_and_updates_card():
     assert not any(b["type"] == "actions" for b in client.updates[0]["blocks"])
 
 
+@pytest.mark.asyncio
+async def test_update_log_records_the_text_the_card_shows(caplog):
+    """The deployed check reads the card outcome from the Cloud Run logs."""
+
+    async def callback(pending_id, approver_name):  # pragma: no cover
+        raise AssertionError("no callback should run")
+
+    bridge, client, _ = make_bridge(callback, callback)
+    await bridge.post_hold(dict(PENDING), None, None)
+    with caplog.at_level(logging.INFO, logger="counter.slack"):
+        await bridge.update_hold({**PENDING, "status": "rejected"})
+
+    assert "hold card updated for pend-1042-170: Rejected by Owner" in caplog.text
+
+
 # -- blocks -----------------------------------------------------------------
 
 

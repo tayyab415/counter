@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import secrets
 from contextlib import asynccontextmanager
 
@@ -232,12 +233,17 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
     return app
 
 
+def server_port() -> int:
+    """Cloud Run sets $PORT; local dev falls back to 8000."""
+    return int(os.environ.get("PORT", "8000"))
+
+
 def main() -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     app = create_app()
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=server_port(), log_level="info")
 
 
 if __name__ == "__main__":
