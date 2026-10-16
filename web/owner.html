@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Counter · owner console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="owner-page">
+
+<header class="owner-head">
+  <div class="brand">
+    <span class="brand-orb"></span>
+    <span class="brand-name">Counter</span>
+    <span class="brand-sub">owner console · every session, live</span>
+  </div>
+  <div class="actions">
+    <span class="status" id="feedState"><i class="dot"></i><span id="feedText">signed out</span></span>
+    <button class="btn" id="resetBtn" hidden>Reset demo</button>
+    <button class="btn" id="logoutBtn" hidden>Log out</button>
+  </div>
+</header>
+
+<section class="stats">
+  <div class="stat"><b id="stAllow">0</b><span>Allowed</span></div>
+  <div class="stat"><b id="stHold">0</b><span>Held</span></div>
+  <div class="stat"><b id="stBlock">0</b><span>Blocked</span></div>
+  <div class="stat"><b id="stRefused">0</b><span>Refused by shop rules</span></div>
+</section>
+
+<section class="cols">
+  <div>
+    <div class="panel">
+      <h2>Waiting for approval <span id="pendCount"></span></h2>
+      <div id="pendList"><div class="empty" style="color:var(--mute)">Nothing waiting.</div></div>
+    </div>
+    <div class="panel">
+      <h2>Decisions · all sessions <span id="decCount"></span></h2>
+      <div class="dlist" id="decList">
+        <div class="empty" style="color:var(--mute)">No decisions yet.</div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="panel">
+      <h2>Policy · counter@shop vs owner</h2>
+      <table class="policy">
+        <tr><th>Tool</th><th>Counter</th><th>Owner</th></tr>
+        <tr><td>lookup_price · get_order · record_inspection<br>notify_customer_on_file · page_owner</td>
+            <td><span class="pill allow">ALLOW</span></td><td><span class="pill allow">ALLOW</span></td></tr>
+        <tr><td>issue_payout · issue_refund · process_exchange</td>
+            <td><span class="pill allow">≤$100</span> <span class="pill hold">$100–350</span>
+                <span class="pill block">&gt;$350</span></td>
+            <td><span class="pill allow">ALLOW</span></td></tr>
+        <tr><td>match_competitor_quote · waive_lock_check · refund_to_account</td>
+            <td><span class="pill block">BLOCK</span></td><td><span class="pill allow">ALLOW</span></td></tr>
+      </table>
+      <p style="font-size:16px;color:var(--mute);margin:12px 0 0">
+        ArmorIQ decides. Holds wait for this console (or Slack <b>Approve once</b>); the stored
+        action runs exactly once. Shop rules (grey) refuse before ArmorIQ is asked.</p>
+    </div>
+    <div class="panel">
+      <h2>Session</h2>
+      <div class="kv"><span>Feed</span><span id="sessFeed">–</span></div>
+      <div class="kv"><span>Last event</span><span id="sessLast">–</span></div>
+      <div class="kv"><span>Pendings</span><span id="sessPend">–</span></div>
+    </div>
+  </div>
+</section>
+
+<div class="login" id="login">
+  <h1>Owner console</h1>
+  <p>Sign in to watch every decision and approve holds. The login runs as the owner identity.</p>
+  <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <button id="go">Sign in</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const state = {token: sessionStorage.getItem("counter_owner_token") || "", decisions: [], pendings: {},
+  stats: {allow: 0, hold: 0, block: 0, refused: 0}, es: null};
+
+const money = (a) => (a === null || a === undefined || a === "") ? "" :
+  "$" + (Number(a) % 1 === 0 ? String(Number(a)) : Number(a).toFixed(2));
+const time = (ts) => ts ? new Date(ts).toLocaleTimeString([], {hour12: false}) : "";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const who = (role) => role === "owner" ? "owner · Sam" : "counter@shop";
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {...opts, headers: {"Content-Type": "application/json",
+    "X-Owner-Token": state.token, ...(opts.headers || {})}});
+  if (res.status === 401) { signOut("Session expired. Sign in again."); throw new Error("401"); }
+  if (!res.ok && res.status !== 409) throw new Error(`${res.status}`);
+  return res.status === 409 ? {conflict: true} : res.json();
+}
+
+function setFeed(kind, text) { $("feedState").className = "status" + (kind ? " " + kind : ""); $("feedText").textContent = text; }
+
+async function signIn(password) {
+  const res = await fetch("api/session", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({role: "owner", password})});
+  if (!res.ok) throw new Error(res.status === 401 ? "Wrong password." : `login failed (${res.status})`);
+  const data = await res.json();
+  state.token = data.owner_token || data.token || "";
+  if (!state.token) throw new Error("no owner token in the session response");
+  sessionStorage.setItem("counter_owner_token", state.token);
+  $("login").hidden = true; $("resetBtn").hidden = false; $("logoutBtn").hidden = false;
+  $("sessFeed").textContent = data.identity_label || "owner";
+  setFeed("live", "live feed");
+  openStream();
+  await loadPending();
+}
+
+function signOut(message) {
+  state.es?.close(); state.es = null;
+  sessionStorage.removeItem("counter_owner_token");
+  state.token = "";
+  $("login").hidden = false; $("resetBtn").hidden = true; $("logoutBtn").hidden = true;
+  setFeed("", "signed out");
+  if (message) $("loginErr").textContent = message;
+}
+
+function openStream() {
+  const url = `api/events?session_id=*&token=${encodeURIComponent(state.token)}`;
+  const es = new EventSource(url);
+  state.es = es;
+  for (const type of ["decision", "pending", "pending_resolved", "reset", "case"]) {
+    es.addEventListener(type, (ev) => { try { onEvent(type, JSON.parse(ev.data)); } catch { /* ignore */ } });
+  }
+  es.onopen = () => setFeed("live", "live feed");
+  es.onerror = () => setFeed("error", "feed reconnecting…");
+}
+
+function onEvent(type, data) {
+  $("sessLast").textContent = `${type} · ${new Date().toLocaleTimeString([], {hour12: false})}`;
+  if (type === "decision") addDecision(data);
+  else if (type === "pending") addPending(data);
+  else if (type === "pending_resolved") { resolveCard(data); loadPending(); }
+  else if (type === "reset") { state.decisions = []; state.pendings = {};
+    state.stats = {allow: 0, hold: 0, block: 0, refused: 0}; renderStats(); renderDecisions();
+    renderPending(); }
+}
+
+function renderStats() {
+  $("stAllow").textContent = state.stats.allow;
+  $("stHold").textContent = state.stats.hold;
+  $("stBlock").textContent = state.stats.block;
+  $("stRefused").textContent = state.stats.refused;
+}
+
+function chip(d) {
+  if (d.layer === "SHOP_RULE") return ['rule', "SHOP RULE"];
+  if (d.action === "hold") return ["hold", "ARMORIQ HOLD"];
+  if (d.action === "block") return ["block", "ARMORIQ BLOCK"];
+  return ["allow", "ARMORIQ ALLOW"];
+}
+
+const seen = new Set();
+function addDecision(d) {
+  if (!d?.id || seen.has(d.id)) return;
+  seen.add(d.id);
+  state.decisions.push(d);
+  const key = d.layer === "SHOP_RULE" ? "refused" : d.action === "allow" ? "allow" : d.action;
+  if (key in state.stats) state.stats[key]++;
+  renderStats();
+  renderDecisions();
+}
+
+function renderDecisions() {
+  const list = $("decList");
+  const items = state.decisions.slice(-60);
+  $("decCount").textContent = state.decisions.length ? `${state.decisions.length} total` : "";
+  if (!items.length) { list.innerHTML = '<div class="empty" style="color:var(--mute)">No decisions yet.</div>'; return; }
+  list.replaceChildren(...items.map(d => {
+    const [cls, label] = chip(d);
+    const amount = d.args?.amount;
+    const div = document.createElement("div");
+    div.className = "ev";
+    div.innerHTML = `
+      <span class="chip ${cls}">${label}</span>
+      <div><code>${esc(d.tool)}</code>
+        <div style="font-size:15px;color:var(--mute)">${esc(who(d.role))} · ${time(d.ts)} · ${esc(d.reason || "")}</div></div>
+      <span class="amt">${amount !== undefined ? money(amount) : ""}</span>
+      <span class="ms">${d.ms !== undefined ? (d.ms / 1000).toFixed(1) + " s" : ""}</span>`;
+    return div;
+  }));
+  list.scrollTop = list.scrollHeight;
+}
+
+/* ------------------------------------------------------------- pendings */
+
+async function loadPending() {
+  if (!state.token) return;
+  const data = await api("api/pending");
+  state.pendings = {};
+  for (const p of data.pending || []) state.pendings[p.pending_id] = p;
+  renderPending();
+  $("sessPend").textContent = String((data.pending || []).filter(p => p.status === "waiting").length);
+}
+
+function addPending(p) {
+  state.pendings[p.pending_id] = p;
+  renderPending();
+  loadPending().catch(() => {});
+}
+
+function renderPending() {
+  const list = $("pendList");
+  const items = Object.values(state.pendings).sort((a, b) => (a.created_ts || "").localeCompare(b.created_ts || ""));
+  const waiting = items.filter(p => p.status === "waiting");
+  $("pendCount").textContent = waiting.length ? `${waiting.length} waiting` : "";
+  if (!items.length) { list.innerHTML = '<div class="empty" style="color:var(--mute)">Nothing waiting.</div>'; return; }
+  list.replaceChildren(...items.map(p => {
+    const amount = p.args?.amount;
+    const div = document.createElement("div");
+    const statusText = {waiting: "waiting for you", executed: `approved — done`, rejected: "rejected by you",
+      failed: "failed"} [p.status] || p.status;
+    div.className = "pend" + (p.status === "waiting" ? "" : " resolved");
+    div.dataset.pid = p.pending_id;
+    div.innerHTML = `
+      <div>${p.has_still
+        ? `<img src="api/pending/${esc(p.pending_id)}/still.jpg?token=${encodeURIComponent(state.token)}" alt="camera still">`
+        : `<div style="height:180px;border-radius:12px;background:#05070a;display:grid;place-items:center;color:var(--mute)">no still</div>`}</div>
+      <div>
+        <div class="ptool">${esc(p.tool)}</div>
+        <div class="kv"><span>Amount</span><span>${amount !== undefined ? money(amount) : "—"}</span></div>
+        <div class="kv"><span>Reason</span><span>${esc(p.args?.reason || p.armoriq_reason || "amount requires owner approval")}</span></div>
+        <div class="kv"><span>Session</span><span>${esc(p.session_id)}</span></div>
+        <div class="kv"><span>Status</span><span class="${p.status === "waiting" ? "warn" : "ok"}">${esc(statusText)}</span></div>
+        ${p.customer_said ? `<div class="kv"><span>Customer</span><span>“${esc(p.customer_said)}”</span></div>` : ""}
+        <div class="btns">
+          <button class="ap" ${p.status === "waiting" ? "" : "disabled"}>Approve once</button>
+          <button class="rj" ${p.status === "waiting" ? "" : "disabled"}>Reject</button>
+        </div>
+      </div>`;
+    div.querySelector(".ap").onclick = () => decide(p.pending_id, "approve");
+    div.querySelector(".rj").onclick = () => decide(p.pending_id, "reject");
+    return div;
+  }));
+}
+
+async function decide(pid, action) {
+  const card = document.querySelector(`.pend[data-pid="${pid}"]`);
+  const out = await api(`api/pending/${pid}/${action}`, {method: "POST"});
+  if (out?.conflict) { loadPending(); return; }
+  resolveCard({pending_id: pid, status: action === "approve" ? "executed" : "rejected", result: out?.result, tool: out?.tool});
+  loadPending().catch(() => {});
+}
+
+function resolveCard(ev) {
+  const card = document.querySelector(`.pend[data-pid="${ev.pending_id}"]`);
+  if (!card) return;
+  const ok = ev.status === "executed";
+  card.classList.add("resolved");
+  const status = card.querySelector(".kv:last-of-type span:last-child");
+  if (status) { status.className = ok ? "ok" : "bad";
+    status.textContent = ok ? `approved once — ${ev.result?.status || "done"}` : "rejected"; }
+  for (const b of card.querySelectorAll(".btns button")) b.disabled = true;
+}
+
+/* ------------------------------------------------------------------ boot */
+
+$("go").onclick = async () => {
+  $("loginErr").textContent = "";
+  const pw = $("pw").value;
+  $("pw").value = "";
+  try { await signIn(pw); }
+  catch (e) { $("loginErr").textContent = e.message; }
+};
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("go").click(); });
+$("logoutBtn").onclick = () => signOut("");
+$("resetBtn").onclick = async () => {
+  await api("api/reset", {method: "POST"});
+  $("sessLast").textContent = "reset · " + new Date().toLocaleTimeString([], {hour12: false});
+  await loadPending();
+};
+renderStats();
+renderDecisions();
+renderPending();
+if (state.token) { signIn0(); } else { $("login").hidden = false; }
+
+async function signIn0() {           // reuse a stored token after a reload
+  try {
+    $("login").hidden = true; $("resetBtn").hidden = false; $("logoutBtn").hidden = false;
+    setFeed("live", "live feed");
+    $("sessFeed").textContent = "owner (stored token)";
+    openStream();
+    await loadPending();
+  } catch (e) { signOut("Session expired. Sign in again."); }
+}
+window.__owner = {state};
+</script>
+</body>
+</html>
