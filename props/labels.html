@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Counter prop labels</title>
+<style>
+  @page { size: A4 portrait; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  .sheet { position: relative; width: 210mm; height: 297mm; background: #fff; }
+  .label {
+    position: absolute;
+    width: 60mm;
+    height: 25mm;
+    padding: 2.5mm 2.4mm;
+    background: #fff;
+    color: #000;
+    border: 0.5mm solid #000;
+    overflow: hidden;
+    font-family: "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+  }
+  .sn { font-size: 12px; font-weight: 700; letter-spacing: 1px; }
+  .serial { font-size: 22px; font-weight: 700; line-height: 1.15; margin-top: 1px; white-space: nowrap; }
+  .item { font-size: 13px; font-weight: 700; margin-top: 1px; }
+  /* two columns, two rows; column N is spinner + its spare */
+  #lbl-charger          { left: 40mm; top: 60mm; }
+  #lbl-controller       { left: 110mm; top: 60mm; }
+  #lbl-charger-spare    { left: 40mm; top: 100mm; }
+  #lbl-controller-spare { left: 110mm; top: 100mm; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="label" id="lbl-charger">
+    <div class="sn">S/N</div>
+    <div class="serial">C65W-88120-8RT2</div>
+    <div class="item">USB-C 65W charger</div>
+  </div>
+
+  <div class="label" id="lbl-controller">
+    <div class="sn">S/N</div>
+    <div class="serial">0457-2213-X7T1</div>
+    <div class="item">Xbox Wireless Controller</div>
+  </div>
+
+  <div class="label" id="lbl-charger-spare">
+    <div class="sn">S/N</div>
+    <div class="serial">C65W-88120-8RT2</div>
+    <div class="item">USB-C 65W charger</div>
+  </div>
+
+  <div class="label" id="lbl-controller-spare">
+    <div class="sn">S/N</div>
+    <div class="serial">0457-2213-X7T1</div>
+    <div class="item">Xbox Wireless Controller</div>
+  </div>
+
+</div>
+</body>
+</html>
