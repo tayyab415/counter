@@ -1,0 +1,17 @@
+# Keep the build context small. gcloud run deploy --source uploads this tree;
+# docker build also uses this file.
+.git
+.gitignore
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+*.db
+*.log
+.env
+.env.*
+web/shots
+reference/*.png
+.superpowers
+node_modules
