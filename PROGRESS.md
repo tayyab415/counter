@@ -171,3 +171,7 @@ The Slack app does not exist yet, so the live card click is still open. The smok
 - With real tokens the card posts and the wait-for-click path runs; that is the next check once the app is created.
 
 Notes: `SlackBridge` matches CONTRACTS 4 (start / post_hold / post_block / update_hold). It adds one keyword-only `client` parameter so tests can inject a fake Slack client; no contract change. The approve click calls `on_approve` once, `users.info` gives the real name (fallback "Owner"), and the card ends as "Approved once by <name> · <result status>" / "Rejected by <name>" / "Already handled"; double clicks (including two clicks racing) never run the action twice. Tokens are never logged.
+
+## Beat 3 serial read (shot 3, 2026-10-17 00:43, dim room)
+Real phone (iPhone 15, About screen, about 35 cm away). Full 1280×720 frame: both gemini-3.1-flash-lite and gemini-3.8-flash read `QWRQ446JQH`. The 768 px copy (the size of a live frame): `GWRQ4483QH` / `GWRQ4463QH`, so characters 7–8 drift. Order 1042's serial ends in `4MD9`, which shares nothing with any of these reads, so the mismatch refusal holds whatever the misread. Keep beat 3. For filming: brighter light, and the web app sends one full-resolution frame when it swaps to the camera tile.
+Props for beats 2 and 5 need serial labels the agent can read that match the seed (`C65W-88120-8RT2` on the charger, `0457-2213-X7T1` on the controller). Otherwise an unreadable serial gets recorded and the serial rule refuses the refund or exchange.
