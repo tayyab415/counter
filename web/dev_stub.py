@@ -495,7 +495,8 @@ def require_owner(request: Request):
 @app.get("/api/pending")
 async def api_pending(request: Request):
     require_owner(request)
-    return {"pending": [public_pending(p) for p in sorted(store.pendings.values(), key=lambda p: p["created_ts"])]}
+    # CONTRACTS section 2: a list (PendingAction without the still, plus has_still)
+    return [public_pending(p) for p in sorted(store.pendings.values(), key=lambda p: p["created_ts"])]
 
 
 @app.get("/api/pending/{pid}/still.jpg")

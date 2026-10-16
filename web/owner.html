@@ -97,12 +97,19 @@ async function api(path, opts = {}) {
 
 function setFeed(kind, text) { $("feedState").className = "status" + (kind ? " " + kind : ""); $("feedText").textContent = text; }
 
+function pickOwnerToken(data) {
+  for (const k of ["owner_token", "token", "ownerToken", "x_owner_token", "access_token"]) {
+    if (data && typeof data[k] === "string" && data[k]) return data[k];
+  }
+  return "";
+}
+
 async function signIn(password) {
   const res = await fetch("api/session", {method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({role: "owner", password})});
   if (!res.ok) throw new Error(res.status === 401 ? "Wrong password." : `login failed (${res.status})`);
   const data = await res.json();
-  state.token = data.owner_token || data.token || "";
+  state.token = pickOwnerToken(data);
   if (!state.token) throw new Error("no owner token in the session response");
   sessionStorage.setItem("counter_owner_token", state.token);
   $("login").hidden = true; $("resetBtn").hidden = false; $("logoutBtn").hidden = false;
@@ -193,10 +200,11 @@ function renderDecisions() {
 async function loadPending() {
   if (!state.token) return;
   const data = await api("api/pending");
+  const list = Array.isArray(data) ? data : (data.pending || []);   // CONTRACTS says list; the stub wraps it
   state.pendings = {};
-  for (const p of data.pending || []) state.pendings[p.pending_id] = p;
+  for (const p of list) state.pendings[p.pending_id] = p;
   renderPending();
-  $("sessPend").textContent = String((data.pending || []).filter(p => p.status === "waiting").length);
+  $("sessPend").textContent = String(list.filter(p => p.status === "waiting").length);
 }
 
 function addPending(p) {
