@@ -393,6 +393,23 @@ async def test_update_log_records_the_text_the_card_shows(caplog):
     assert "hold card updated for pend-1042-170: Rejected by Owner" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_outcome_before_the_card_lands_is_applied_after_posting():
+    async def never(pending_id, approver_name):  # pragma: no cover
+        raise AssertionError("no click in this test")
+
+    bridge, client, app = make_bridge(never, never)
+    # The owner console rejects before the hold card has been posted.
+    await bridge.update_hold({**PENDING, "status": "rejected", "approver_name": "Owner"})
+    assert client.updates == []
+
+    await bridge.post_hold(dict(PENDING), None, PENDING["customer_said"])
+
+    assert len(client.updates) == 1
+    assert "Rejected by Owner" in all_text(client.updates[0]["blocks"])
+    assert not any(b["type"] == "actions" for b in client.updates[0]["blocks"])
+
+
 # -- blocks -----------------------------------------------------------------
 
 

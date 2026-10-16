@@ -74,6 +74,8 @@ class SlackBridge:
         self._holds: dict[str, dict] = {}  # pending_id -> {channel, ts, blocks, state}
         self._approvers: dict[str, str] = {}  # pending_id -> who clicked
         self._resolved: set[str] = set()
+        # Outcomes that arrived while the card was still being posted.
+        self._early: dict[str, dict] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -145,6 +147,9 @@ class SlackBridge:
             "state": "waiting",
         }
         logger.info("slack: hold %s posted for %s", pending_id, tool)
+        early = self._early.pop(pending_id, None)
+        if early is not None:
+            await self.update_hold(early)
         if still_jpeg:
             try:
                 await self._client.files_upload_v2(
@@ -182,10 +187,13 @@ class SlackBridge:
         """Replace the buttons with the outcome once a hold is no longer waiting."""
         pending_id = str(pending.get("pending_id") or "")
         hold = self._holds.get(pending_id)
-        if hold is None:
-            logger.debug("slack: update_hold for unknown hold %s", pending_id)
-            return
         if pending.get("status") == "waiting":
+            return
+        if hold is None:
+            # The card may still be posting; post_hold applies this when it lands.
+            if pending_id:
+                self._early[pending_id] = dict(pending)
+            logger.debug("slack: update_hold before the card for %s", pending_id)
             return
         self._resolved.add(pending_id)
         await self._edit_outcome(pending_id, self._outcome_text(pending))

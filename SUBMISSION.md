@@ -20,7 +20,7 @@ Shop rules run first and refuse what they must: a serial on camera that doesn't 
 
 1. The amount check runs before `toolEnforcement`: a blocked tool called with an amount of 170 becomes an approvable hold (`hold / amount_requires_approval`, then `allow / approved_delegation` after approval). We use variant B so blocked tools answer `block / tool_not_in_allowlist` at any amount.
 2. `approverRole` is a client-supplied field in the approve request body (`reference/armoriq/tests_lib.py:56`).
-3. Approval dedup is per requester and tool, and ignores the amount, so an approval is not bound to the exact args. The backend stores the exact action and re-checks it on approve.
+3. Approval dedup is per requester and tool, and ignores the amount: a second hold on the same tool gets the first hold's delegation id. The backend stores the exact action and re-checks it on approve.
 4. A rejection sticks to the plan: the same tool answers `block / delegation_rejected` at any amount above the threshold until a new plan.
 
 Full write-up with raw outputs: `reference/armoriq/FINDINGS.md`, `reference/armoriq/out_*.txt`.

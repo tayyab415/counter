@@ -4,15 +4,14 @@
 #   bash deploy/deploy.sh
 #
 # Run deploy/push_secrets.py first so every counter-<key> secret exists.
-# On this project the compute service account cannot grant
-# secretmanager.secretAccessor (403 on secrets.setIamPolicy), so the deploy
-# here ran with the fallback:
+# The runtime service account needs roles/secretmanager.secretAccessor on each
+# counter-<key> secret. The compute service account cannot grant that itself
+# (403 on secrets.setIamPolicy); a project owner ran the grant once, so the
+# default path below uses --set-secrets. If you cannot get the grant, a
+# fallback passes plain env vars from a temp file outside the repo (delete it
+# right after; never commit or print it):
 #
 #   COUNTER_ENV_VARS_FILE=/tmp/counter-env-vars.yaml bash deploy/deploy.sh
-#
-# where that YAML file holds the same KEY: value pairs. It is a temp file
-# outside the repo and gets deleted right after the deploy. Never commit or
-# print it.
 #
 # Flags and why:
 #   --min/max-instances 1     one process: sessions and pending actions live in memory

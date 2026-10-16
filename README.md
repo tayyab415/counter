@@ -68,8 +68,8 @@ Four things we hit while building against ArmorIQ. Full write-up in `reference/a
    POST /delegation/approve  {"delegationId", "approverEmail", "approverRole": "org_admin"}
    ```
    (`reference/armoriq/tests_lib.py:56`) and the API answered `201 Delegation approved`. The role the caller claims rides along in the request.
-3. **An approval binds to the tool, not the exact args.** Delegation dedup is per requester and tool and ignores the amount: calling `process_exchange 200` while a `process_exchange 170` hold was pending returned the same delegation id (FINDINGS.md, T1). Our backend stores the exact action next to the pending row and re-checks that stored action on approve, so an approval can only run what the owner saw.
-4. **A rejection sticks to the plan.** After a rejection, the same tool in the same plan answers `block / delegation_rejected` at any amount above the threshold, and it stayed that way for at least 90 s. A new plan clears it (FINDINGS.md, F1). Counter runs one plan per customer conversation, and moves to a new plan after the owner declines.
+3. **Holds dedup by tool, not by args.** Delegation dedup is per requester and tool and ignores the amount: calling `process_exchange 200` while a `process_exchange 170` hold was pending returned the same delegation id (FINDINGS.md, T1). So approving that id may approve an amount the owner never saw; we did not test which amount runs. Our backend stores the exact action next to the pending row and re-checks that stored action on approve, so an approval can only run what the owner saw.
+4. **A rejection sticks to the plan.** After a rejection, the same tool in the same plan answers `block / delegation_rejected` at any amount above the threshold, and it stayed that way for at least 90 s. A new plan clears it (FINDINGS.md, F1). Counter starts a new plan for every call session, so a decline only affects the rest of that conversation.
 
 ## Run it
 
@@ -83,7 +83,7 @@ bash backend/scripts/dev.sh        # MCP server on 127.0.0.1:8001, backend on 12
 Tests:
 ```bash
 cd mcp_server && uv run pytest     # 9 passed
-cd backend && uv run pytest        # 70 passed
+cd backend && uv run pytest        # 71 passed
 ```
 
 The six beats against any backend (local or the deployed one):
