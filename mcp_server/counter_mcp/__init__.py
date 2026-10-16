@@ -1,0 +1,1 @@
+"""Counter MCP server package."""

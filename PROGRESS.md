@@ -11,9 +11,125 @@
 - **slack**: unit tests with a fake Slack client pass; with real tokens, a hold posts a card and the Approve button executes the stored action once.
 
 ## Contract changes
-(none yet)
+
+Core-side additions (no breaking changes; made so Slack/console get the same data):
+- `POST /api/tool` accepts an optional `customer_said` string in the body. Reason: the Slack hold card and the owner console show the customer's last words; the web app may omit it.
+- Owner `/api/session` response includes `owner_token` (the value for `X-Owner-Token`); `GET /api/events` accepts the owner token as `?token=` or `X-Owner-Token` header. Reason: `EventSource` cannot set headers, so the query param must work.
+- `Decision.ts` is an ISO-8601 UTC string, `ms` a number. `GET /api/pending` returns a bare JSON list of PendingAction objects (no wrapper), stills stay out of it (`has_still` flag only).
+- MCP server: custom routes `POST /reset` and `GET /healthz` sit next to `/mcp`; `/reset` does its own bearer check because FastMCP's auth wrapper only covers the MCP endpoint.
 
 ## core
+
+Built on `build/core`: `mcp_server/` (FastMCP, the 11 tools, SQLite seed, bearer auth, `POST /reset`, `GET /healthz`) and `backend/` (FastAPI gate: shop rules → live ArmorIQ → real MCP, pending approvals, SSE, case cards, Gemini token), plus `backend/scripts/dev.sh`, `beats.py`, `live_check.py`.
+
+### How to run
+
+```
+cd backend && ./scripts/dev.sh                    # MCP on :8001, backend on :8000 (dev.sh needs any bash; no `wait -n` on macOS bash 3.2)
+cd mcp_server && uv run pytest -q                 # 9 tests
+cd backend && uv run pytest -q                    # 55 tests (fakes, no network)
+cd backend && uv run python scripts/beats.py      # six beats: live ArmorIQ + real MCP over HTTP; exit 0 when all pass
+cd backend && uv run python scripts/live_check.py # backend-minted Gemini token opens a Live session; audio verified
+```
+
+### Tests (real output)
+
+```
+mcp_server$ uv run pytest -q
+.........                                                                [100%]
+9 passed in 1.19s
+
+backend$ uv run pytest -q
+.......................................................                  [100%]
+55 passed in 0.43s
+```
+
+### Beats (real output, `uv run python scripts/beats.py` with `dev.sh` up)
+
+```
+backend http://127.0.0.1:8000 · ArmorIQ https://api.armoriq.ai
+reset: ok
+sessions: counter counter@shop (ses-63277ee2) · owner owner · Sam (ses-9efb456c)
+
+B1 unlocked phone + printed $420 quote: match_competitor_quote 420 -> ARMORIQ block
+    match_competitor_quote $420 -> ARMORIQ / block / tool_not_in_allowlist / 801ms
+  B1 PASS  expect ARMORIQ block | got ARMORIQ/block tool_not_in_allowlist (blocked_by_policy)
+
+B2 $45 charger return, order 1101: issue_refund 45 -> allow + refunded
+    issue_refund $45 -> ARMORIQ / allow / allow_with_logging / 1134ms
+  B2 PASS  expect ARMORIQ allow + refunded | got ARMORIQ/allow refunded -> Visa ending 6604
+
+B3 wrong phone for order 1042 (serial ...7QK2 on camera): refund must be refused by shop rules
+    record_inspection -> ARMORIQ / allow / allow_with_logging / 780ms
+    issue_refund $799 -> SHOP_RULE / refused / serial on camera doesn't match the order / 0ms
+  B3 PASS  expect inspection recorded, then SHOP_RULE refused (serial mismatch) | got inspection=recorded, refund SHOP_RULE/refused serial on camera doesn't match the order
+
+B4 send it to my husband's card: refund_to_account 45 -> ARMORIQ block; repeat refund 45 -> already refunded
+    refund_to_account $45 -> ARMORIQ / block / tool_not_in_allowlist / 765ms
+    issue_refund $45 -> SHOP_RULE / refused / this order was already refunded / 0ms
+  B4 PASS  expect refund_to_account ARMORIQ block + second refund SHOP_RULE refused | got refund_to_account ARMORIQ/block tool_not_in_allowlist; refund #2 SHOP_RULE/refused this order was already refunded
+
+B5 upgrade, $170 gap: process_exchange 170 -> HOLD, owner approves in Slack/console -> executed once
+    record_inspection -> ARMORIQ / allow / allow_with_logging / 797ms
+    process_exchange $170 -> ARMORIQ / hold / amount_requires_approval / 1710ms
+    approve pen-ef60181ffcb46b15 -> 200 / executed / armoriq 201 / 1604ms
+  B5 PASS  expect HOLD then approve -> executed once (charged 170) | got hold hold deleg c30d1ca9, approve -> executed
+
+B6 same tool, same amount: counter match 420 -> block; owner match 420 -> allow
+    match_competitor_quote $420 -> ARMORIQ / block / tool_not_in_allowlist / 813ms
+    match_competitor_quote $420 -> ARMORIQ / allow / enforcement_passed / 849ms
+  B6 PASS  expect counter block, owner allow | got counter block tool_not_in_allowlist; owner allow enforcement_passed -> matched
+
+cleanup: reject delegations left pending
+  (none left pending)
+
+=== summary ===
+B1       PASS  ARMORIQ block | got: ARMORIQ/block tool_not_in_allowlist (blocked_by_policy)
+B2       PASS  ARMORIQ allow + refunded | got: ARMORIQ/allow refunded -> Visa ending 6604
+B3       PASS  inspection recorded, then SHOP_RULE refused (serial mismatch) | got: inspection=recorded, refund SHOP_RULE/refused serial on camera doesn't match the order
+B4       PASS  refund_to_account ARMORIQ block + second refund SHOP_RULE refused | got: refund_to_account ARMORIQ/block tool_not_in_allowlist; refund #2 SHOP_RULE/refused this order was already refunded
+B5       PASS  HOLD then approve -> executed once (charged 170) | got: hold hold deleg c30d1ca9, approve -> executed
+B6       PASS  counter block, owner allow | got: counter block tool_not_in_allowlist; owner allow enforcement_passed -> matched
+ALL BEATS PASS
+```
+
+Cleanup detail: B5's delegation was approved at ArmorIQ, so it is resolved, not pending — rejecting an approved delegation answers 400 "already rejected"/"already resolved", so the driver only rejects genuinely pending ones. Reject path proven on a live hold left pending on purpose:
+
+```
+hold: hold amount_requires_approval deleg 6b699467 pending item: pen-8ff71b711f0e42ef
+reject pending delegation: 201 {"delegationId":"6b699467-...","status":"rejected",...}
+reject again: 400 {"message":"Delegation is already rejected",...}
+```
+
+### Gemini Live token (real output, `uv run python scripts/live_check.py`)
+
+The script takes the token the backend mints in `/api/session`, opens `gemini-3.1-flash-live-preview` with it once per api version, sends one text turn, counts audio bytes back:
+
+```
+v1alpha  connect ok     audio 250082B  text 'I can answer questions, provide information, or chat about t'
+v1beta   connect ok     audio 289922B  text 'I can help with questions, writing, summarizing, and more. I'
+
+=== result ===
+v1alpha  connect=True audio_bytes=250082 text="I can answer questions, provide information, or chat about things. What's on you"
+v1beta   connect=True audio_bytes=289922 text='I can help with questions, writing, summarizing, and more. Is there anything spe'
+WORKING apiVersion with an ephemeral token: v1alpha, v1beta
+audio came back: yes
+```
+
+Mint side, same check (`auth_tokens.create` per api version, real output):
+
+```
+mint v1alpha: ok (auth_tokens/6a28...)
+mint v1beta: ok (auth_tokens/55e6...)
+```
+
+Answer: both api versions work with the installed `google-genai`, for minting and for connecting with the token, and audio comes back on both. The SDK itself prints `The SDK's ephemeral token support is in v1alpha only` and recommends `HttpOptions(api_version="v1alpha")`, so v1alpha stays the default everywhere (backend `GEMINI_API_VERSION`, and `web/` should connect with `apiVersion: "v1alpha"`).
+
+### Notes
+
+- Shop-rule order, mapping and fail-closed behavior are exactly per `CONTRACTS.md`; the backend prefetches the order row over MCP for the serial rule (the seed lives only in the MCP server).
+- Decision `ms` is total elapsed for the call path; SSE `decision` events carry the same object.
+- 55 backend tests use fakes (no network); the beats run is the live end-to-end proof.
 
 ## web
 
