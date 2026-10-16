@@ -675,6 +675,46 @@ $ cd backend && uv run pytest -q
 - `DEMO.md`: props checklist, the exact customer line per beat with the expected rail row, shot list with timings, fire recovery.
 - `SUBMISSION.md`: name and one-line pitch, a 210-word description, agent/MCP/ArmorIQ usage, links. Video link is a placeholder.
 
+### Orchestrator check (after the DeepSeek run)
+
+Re-ran the done conditions myself against the deployed service and fixed what I found.
+
+- Secrets: the runtime service account now has `roles/secretmanager.secretAccessor` on all eight `counter-<key>` secrets (granted by the project owner from the Mac). `deploy/deploy.sh` deploys with `--set-secrets`; `gcloud run services describe` lists all eight keys as secret refs and only the five path/port vars as plain. Old revisions 00001 and 00002, which carried plain env values, are deleted.
+- Slack race: a reject that lands before the hold card finishes posting was dropped, which left live buttons on a resolved card. `SlackBridge` now keeps that outcome and applies it right after the post. New test `test_outcome_before_the_card_lands_is_applied_after_posting`. Backend 71 passed, MCP 9 passed.
+- Docs: README finding 3 now says the which-amount-runs question is untested (as FINDINGS.md does). Finding 4 no longer claims a re-plan after a decline; the app starts one plan per call session.
+
+Revision `counter-00004-hjn`, fast reject probe:
+```
+healthz 200
+record_inspection ARMORIQ allow allow_with_logging
+process_exchange ARMORIQ hold amount_requires_approval
+pending pen-49ec83d45f74579e
+reject 200 rejected
+reject again 409
+waiting: []
+reset 200
+2026-10-16T22:20:23.225076Z	INFO counter.slack: slack: hold card updated for pen-49ec83d45f74579e: Rejected by Owner
+2026-10-16T22:20:23.073782Z	INFO counter.slack: slack: hold pen-49ec83d45f74579e posted for process_exchange
+2026-10-16T22:19:35.485056Z	INFO counter.slack: ⚡️ Bolt app is running!
+2026-10-16T22:19:35.484733Z	INFO counter.slack: A new session (s_8732258353571) has been established
+2026-10-16T22:19:35.220525Z	INFO counter.backend: slack bridge started
+2026-10-16T22:19:35.220392Z	INFO counter.slack: slack: bridge enabled (channel C0C9RHLTXJ7)
+```
+
+Beats against revision 00004:
+```
+=== summary ===
+B1       PASS  ARMORIQ block | got: ARMORIQ/block tool_not_in_allowlist (blocked_by_policy)
+B2       PASS  ARMORIQ allow + refunded | got: ARMORIQ/allow refunded -> Visa ending 6604
+B3       PASS  inspection recorded, then SHOP_RULE refused (serial mismatch) | got: inspection=recorded, refund SHOP_RULE/refused serial on camera doesn't match the order
+B4       PASS  refund_to_account ARMORIQ block + second refund SHOP_RULE refused | got: refund_to_account ARMORIQ/block tool_not_in_allowlist; refund #2 SHOP_RULE/refused this order was already refunded
+B5       PASS  HOLD then approve -> executed once (charged 170) | got: hold hold deleg d181114c, approve -> executed
+B6       PASS  counter block, owner allow | got: counter block tool_not_in_allowlist; owner allow enforcement_passed -> matched
+ALL BEATS PASS
+```
+
+`check_web.py --base <url> --live` against revision 00003: result OK (mock replay, owner login 1b, live Gemini turn with audio and a tool call). Only console error: the expected 401 from the wrong-password step.
+
 ### Left for the human
 
 - Film the 90 s video from `DEMO.md`; `SUBMISSION.md` has the placeholder link.
