@@ -366,3 +366,317 @@ Props for beats 2 and 5 need serial labels the agent can read that match the see
 
 ## Slack live check (2026-10-17)
 App "Counter · ArmorIQ" (A0C9ZMELAM7) created with the Slack CLI login on t3-agent-1 (`apps.manifest.create` + `apps.developerInstall`, which returns the bot and app-level tokens), channel `#counter-approvals` (C0C9RHLTXJ7). A $170 `process_exchange` hold posted a card; the owner tapped Approve once in Slack. The backend made one `/delegation/approve`, one re-check (`/iap/sdk/enforce`) and one MCP call. Pending `pen-50f1944292a3224f` → `executed`, approver from Slack. The `exchanges` table gained exactly one row (exc-2; exc-1 came from the browser check's console approval). Nothing waiting afterwards.
+
+## finish
+
+Branch `build/finish`, 2026-10-16 evening. This section is the last mile: Cloud Run deploy, owner login from the call screen, printed serial labels, README/DEMO/SUBMISSION, and one end-to-end pass on the deployed revision. Everything below is real output.
+
+### Deployed revision
+
+`bash deploy/deploy.sh`, with the fallback the script documents (the project's compute service account cannot grant `secretmanager.secretAccessor`; `secrets.setIamPolicy` answers 403, so the deploy carried an `--env-vars-file` with the same keys, outside the repo, deleted right after):
+
+```
+secrets: --env-vars-file /tmp/opencode/counter-env-vars.yaml (secret IAM grant failed on this project)
+Building using Dockerfile and deploying container to Cloud Run service [counter] in project [gen-lang-client-0261050164] region [us-central1]
+Building and deploying...
+Validating configuration......done
+Uploading sources....................done
+Building Container [...] done
+Setting IAM Policy........done
+Creating Revision [...] done
+Routing traffic.....done
+Done.
+Service [counter] revision [counter-00002-d5s] has been deployed and is serving 100 percent of traffic.
+Service URL: https://counter-1027824348124.us-central1.run.app
+```
+
+`counter-00002-d5s` is the revision that logs the Slack card outcome (`slack: hold card updated for <id>: <outcome>`). One Slack listener at a time: Cloud Run owns the live service; every local run in this section had `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN` blanked.
+
+### Live checks on the deployed revision
+
+HTTP:
+
+```
+$ for p in /api/healthz / /owner.html; do curl -s -o /dev/null -w "$p -> %{http_code}\n" \
+    "https://counter-1027824348124.us-central1.run.app$p"; done
+/api/healthz -> 200
+/ -> 200
+/owner.html -> 200
+$ curl -s https://counter-1027824348124.us-central1.run.app/api/healthz
+{"ok":true}
+```
+
+(`/healthz` without the `/api` prefix is the MCP server's route; it only listens inside the container.)
+
+Six beats, `cd backend && COUNTER_BACKEND=https://counter-1027824348124.us-central1.run.app uv run python scripts/beats.py`:
+
+```
+remote backend: skipping the local MCP check (the MCP server runs inside https://counter-1027824348124.us-central1.run.app)
+backend https://counter-1027824348124.us-central1.run.app · ArmorIQ https://api.armoriq.ai
+reset: ok
+sessions: counter counter@shop (ses-be0cf974) · owner owner · Sam (ses-7675fd31)
+
+B1 unlocked phone + printed $420 quote: match_competitor_quote 420 -> ARMORIQ block
+    match_competitor_quote $420 -> ARMORIQ / block / tool_not_in_allowlist / 500ms
+  B1 PASS  expect ARMORIQ block | got ARMORIQ/block tool_not_in_allowlist (blocked_by_policy)
+
+B2 $45 charger return, order 1101: issue_refund 45 -> allow + refunded
+    issue_refund $45 -> ARMORIQ / allow / allow_with_logging / 655ms
+  B2 PASS  expect ARMORIQ allow + refunded | got ARMORIQ/allow refunded -> Visa ending 6604
+
+B3 wrong phone for order 1042 (serial ...7QK2 on camera): refund must be refused by shop rules
+    record_inspection -> ARMORIQ / allow / allow_with_logging / 676ms
+    issue_refund $799 -> SHOP_RULE / refused / serial on camera doesn't match the order / 0ms
+  B3 PASS  expect inspection recorded, then SHOP_RULE refused (serial mismatch) | got inspection=recorded, refund SHOP_RULE/refused serial on camera doesn't match the order
+
+B4 send it to my husband's card: refund_to_account 45 -> ARMORIQ block; repeat refund 45 -> already refunded
+    refund_to_account $45 -> ARMORIQ / block / tool_not_in_allowlist / 539ms
+    issue_refund $45 -> SHOP_RULE / refused / this order was already refunded / 0ms
+  B4 PASS  expect refund_to_account ARMORIQ block + second refund SHOP_RULE refused | got refund_to_account ARMORIQ/block tool_not_in_allowlist; refund #2 SHOP_RULE/refused this order was already refunded
+
+B5 upgrade, $170 gap: process_exchange 170 -> HOLD, owner approves in Slack/console -> executed once
+    record_inspection -> ARMORIQ / allow / allow_with_logging / 543ms
+    process_exchange $170 -> ARMORIQ / hold / amount_requires_approval / 1164ms
+    approve pen-e68fc94efb0e9c5d -> 200 / executed / armoriq 201 / 852ms
+  B5 PASS  expect HOLD then approve -> executed once (charged 170) | got hold hold deleg 6b7b7aed, approve -> executed
+
+B6 same tool, same amount: counter match 420 -> block; owner match 420 -> allow
+    match_competitor_quote $420 -> ARMORIQ / block / tool_not_in_allowlist / 494ms
+    match_competitor_quote $420 -> ARMORIQ / allow / enforcement_passed / 538ms
+  B6 PASS  expect counter block, owner allow | got counter block tool_not_in_allowlist; owner allow enforcement_passed -> matched
+
+cleanup: reject delegations left pending
+  (none left pending)
+
+=== summary ===
+B1       PASS  ARMORIQ block | got: ARMORIQ/block tool_not_in_allowlist (blocked_by_policy)
+B2       PASS  ARMORIQ allow + refunded | got: ARMORIQ/allow refunded -> Visa ending 6604
+B3       PASS  inspection recorded, then SHOP_RULE refused (serial mismatch) | got: inspection=recorded, refund SHOP_RULE/refused serial on camera doesn't match the order
+B4       PASS  refund_to_account ARMORIQ block + second refund SHOP_RULE refused | got: refund_to_account ARMORIQ/block tool_not_in_allowlist; refund #2 SHOP_RULE/refused this order was already refunded
+B5       PASS  HOLD then approve -> executed once (charged 170) | got: hold hold deleg 6b7b7aed, approve -> executed
+B6       PASS  counter block, owner allow | got: counter block tool_not_in_allowlist; owner allow enforcement_passed -> matched
+ALL BEATS PASS
+exit=0
+```
+
+Headless Chrome with the live Gemini session, `uv run --python 3.12 --with playwright --with python-dotenv python web/check_web.py --base https://counter-1027824348124.us-central1.run.app --live`:
+
+```
+target https://counter-1027824348124.us-central1.run.app (web/ and /api from the same origin)
+
+1. mock replay (?mock=1)
+   owner console signed in
+   demo reset before the replay: HTTP 200
+   signed in again after the reset
+   mock session ses-d4ceff736a52b158
+   shot mock-1-block.png
+   beat 1: ARMORIQ BLOCK on screen (match_competitor_quote -> block)
+   shot mock-2-refund.png
+   beat 2: ARMORIQ ALLOW on screen (issue_refund -> allow)
+   beat 2: screen shows 'Refunded'
+   shot mock-3-shop-rule.png
+   beat 3: SHOP RULE on screen (issue_refund -> refused)
+   beat 3: screen shows '…7QK2'
+   beat 3 case card: serial on order …4MD9 vs serial on camera …7QK2 ✗
+   shot mock-4-refund-to-account.png
+   beat 4: ARMORIQ BLOCK on screen (refund_to_account -> block)
+   beat 4: screen shows 'already refunded'
+   shot mock-5-hold.png
+   beat 5: ARMORIQ HOLD on screen (process_exchange -> hold)
+   beat 5: screen shows 'Waiting for owner'
+   owner sees the pending card with the still
+   shot mock-5b-approved.png
+   approve once -> waiting card flipped on pending_resolved
+   shot mock-6-owner-claim.png
+   beat 6: ARMORIQ BLOCK on screen (match_competitor_quote -> block)
+   rails: 14 decisions on screen
+
+1b. owner login from the call screen (/?role=owner)
+   password form shown before any session
+   wrong password: error on screen ('Wrong password.')
+   wrong password: no session started
+   shot owner-login-1-wrong.png
+   owner badge on screen: owner · Sam
+   beat 6 tool allowed in the owner session (match_competitor_quote 420 -> ARMORIQ allow -> matched)
+   owner decision on the Decisions rail (ARMORIQ ALLOW)
+   shot owner-login-2-allowed.png
+
+2. live Gemini session (no mock)
+   Gemini Live session open (ephemeral token accepted)
+   shot live-1-connected.png
+   typed turn sent: Hi, I want to return a charger, order 1101
+   shot live-2-turn.png
+   audio arrived: yes 20 chunks, 4040 ms
+   output transcript: yes 10 chunks
+   tool call reached /api/tool: yes 1 sent by the page, decisions came back (no /api/_dev_state)
+   decision on the rail: yes 
+   caption on screen: YouHi, I want to return a charger, order 1101 CounterI see the order for the 65W charger. Can you hold it up to the camera so I can check its condition?
+   token probe: gemini-3.1-flash-live-preview (httpOptions.apiVersion=v1alpha, ephemeral token 76 chars)
+
+3. token apiVersion probe
+   token + v1alpha: {"version": "v1alpha", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}
+   token + v1beta: {"version": "v1beta", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}
+   ephemeral token + apiVersion: {"v1alpha": {"version": "v1alpha", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}, "v1beta": {"version": "v1beta", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}}
+
+console errors / page errors:
+   owner-login console.error: Failed to load resource: the server responded with a status of 401 ()
+
+result: OK
+exit=0
+```
+
+The only console error is the expected 401 from the wrong-password case.
+
+### Hold posted to Slack, reject flips the card
+
+Probe (`/tmp/opencode/reject_probe.py`, helper outside the repo): reset, counter session, inspection, `process_exchange 170` -> hold, `POST /api/pending/{id}/reject` with the owner token, then read `/api/pending` and reset again.
+
+```
+owner session ok: owner · Sam
+reset: 200 {'ok': True}
+owner session ok (after reset)
+counter session ok: counter@shop ses-26d2f8b8
+inspection: ARMORIQ/allow allow_with_logging
+exchange: ARMORIQ/hold amount_requires_approval pending=pen-592cf539d7bb5238 deleg=f14fa7e6
+reject: 200 status=rejected armoriq_reject=201
+pending waiting now: 0
+reset: 200 {'ok': True}
+pending after reset: 0
+REJECT PROBE OK
+```
+
+Cloud Run logs from the same run, `gcloud logging read 'resource.labels.service_name="counter" AND textPayload:"slack:"'`:
+
+```
+2026-10-16T21:51:01.223480Z  INFO counter.slack: slack: bridge enabled (channel C0C9RHLTXJ7)
+2026-10-16T21:51:01.504798Z  INFO counter.slack: A new session (s_8777279189204) has been established
+2026-10-16T21:58:04.870593Z  INFO counter.slack: slack: hold pen-592cf539d7bb5238 posted for process_exchange
+2026-10-16T21:58:06.844317Z  INFO httpx: HTTP Request: POST https://api.armoriq.ai/delegation/reject "HTTP/1.1 201 Created"
+2026-10-16T21:58:07.007174Z  INFO counter.slack: slack: hold card updated for pen-592cf539d7bb5238: Rejected by Owner
+```
+
+The Slack app's scopes cannot read channel history, so the card text is verified through `SlackBridge.update_hold`'s log line. The owner console stage card shows the same outcome through `pending_resolved`. One failed attempt on the way is on record: the first probe reused an owner token across a reset, the reject answered 401, and the leftover delegation was rejected in a cleanup pass (`reject -> rejected armoriq_reject_status 201`); nothing was left pending.
+
+### Owner login from the call screen (local backend)
+
+Same script against the local stack (`--base http://127.0.0.1:8000 --live`, real backend and real MCP on 8001, Slack env blanked):
+
+```
+target http://127.0.0.1:8000 (web/ and /api from the same origin)
+
+1. mock replay (?mock=1)
+   owner console signed in
+   demo reset before the replay: HTTP 200
+   signed in again after the reset
+   mock session ses-336a6479650bfc82
+   shot mock-1-block.png
+   beat 1: ARMORIQ BLOCK on screen (match_competitor_quote -> block)
+   shot mock-2-refund.png
+   beat 2: ARMORIQ ALLOW on screen (issue_refund -> allow)
+   beat 2: screen shows 'Refunded'
+   shot mock-3-shop-rule.png
+   beat 3: SHOP RULE on screen (issue_refund -> refused)
+   beat 3: screen shows '…7QK2'
+   beat 3 case card: serial on order …4MD9 vs serial on camera …7QK2 ✗
+   shot mock-4-refund-to-account.png
+   beat 4: ARMORIQ BLOCK on screen (refund_to_account -> block)
+   beat 4: screen shows 'already refunded'
+   shot mock-5-hold.png
+   beat 5: ARMORIQ HOLD on screen (process_exchange -> hold)
+   beat 5: screen shows 'Waiting for owner'
+   owner sees the pending card with the still
+   shot mock-5b-approved.png
+   approve once -> waiting card flipped on pending_resolved
+   shot mock-6-owner-claim.png
+   beat 6: ARMORIQ BLOCK on screen (match_competitor_quote -> block)
+   rails: 14 decisions on screen
+
+1b. owner login from the call screen (/?role=owner)
+   password form shown before any session
+   wrong password: error on screen ('Wrong password.')
+   wrong password: no session started
+   shot owner-login-1-wrong.png
+   owner badge on screen: owner · Sam
+   beat 6 tool allowed in the owner session (match_competitor_quote 420 -> ARMORIQ allow -> matched)
+   owner decision on the Decisions rail (ARMORIQ ALLOW)
+   shot owner-login-2-allowed.png
+
+2. live Gemini session (no mock)
+   Gemini Live session open (ephemeral token accepted)
+   shot live-1-connected.png
+   typed turn sent: Hi, I want to return a charger, order 1101
+   shot live-2-turn.png
+   audio arrived: yes 24 chunks, 4160 ms
+   output transcript: yes 12 chunks
+   tool call reached /api/tool: yes 1 sent by the page, decisions came back (no /api/_dev_state)
+   decision on the rail: yes 
+   caption on screen: YouHi, I want to return a charger, order 1101 CounterSure, I can help with that. Can you hold up the charger and its box to the camera so I can look at the condition? I see it was purchased recently.
+   token probe: gemini-3.1-flash-live-preview (httpOptions.apiVersion=v1alpha, ephemeral token 76 chars)
+
+3. token apiVersion probe
+   token + v1alpha: {"version": "v1alpha", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}
+   token + v1beta: {"version": "v1beta", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}
+   ephemeral token + apiVersion: {"v1alpha": {"version": "v1alpha", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}, "v1beta": {"version": "v1beta", "setupComplete": true, "firstMessages": ["setupComplete"], "events": ["socket open"]}}
+
+console errors / page errors:
+   owner-login console.error: Failed to load resource: the server responded with a status of 401 (Unauthorized)
+
+result: OK
+exit=0
+```
+
+Part 1b is new in `web/check_web.py` (`--base` target plus the owner-login section). It found one bug on the first run: the wait for `#ownerLogin[hidden]` used a visibility check that can never pass; it now waits on `element.hidden === true`. The older sections above show `rails: 13`; the count is 14 now, informational only.
+
+### Serial label props
+
+`props/labels.pdf` is an A4 sheet with one high-contrast monospace label per device (plus a spare of each): charger `C65W-88120-8RT2` (order 1101) and controller `0457-2213-X7T1` (order 1077). Rendered with headless chromium, then read back with `gemini-3.1-flash-lite`, including 768 px copies at live-frame size:
+
+```
+rendered props/labels.pdf and 4 label PNGs
+lbl-charger-768.png: 768x325
+lbl-controller-768.png: 768x323
+lbl-charger-spare-768.png: 768x325
+lbl-controller-spare-768.png: 768x323
+labels-sheet-768.png: 494x768
+reading with gemini-3.1-flash-lite
+
+lbl-charger.png: PASS expected C65W-88120-8RT2
+    raw: 'C65W-88120-8RT2'
+lbl-controller.png: PASS expected 0457-2213-X7T1
+    raw: '0457-2213-X7T1'
+lbl-charger-spare.png: PASS expected C65W-88120-8RT2
+    raw: 'C65W-88120-8RT2'
+lbl-controller-spare.png: PASS expected 0457-2213-X7T1
+    raw: '0457-2213-X7T1'
+lbl-charger-768.png: PASS expected C65W-88120-8RT2
+    raw: 'C65W-88120-8RT2'
+lbl-controller-768.png: PASS expected 0457-2213-X7T1
+    raw: '0457-2213-X7T1'
+labels-sheet-768.png: PASS expected both serials
+    raw: 'C65W-88120-8RT2\n0457-2213-X7T1\nC65W-88120-8RT2\n0457-2213-X7T1'
+
+result: ALL READS EXACT
+exit=0
+```
+
+### Tests
+
+```
+$ cd mcp_server && uv run pytest -q
+9 passed in 4.98s
+
+$ cd backend && uv run pytest -q
+70 passed in 2.56s
+```
+
+### Docs
+
+- `README.md`: what Counter is, the six beats and their deciding layer, the mermaid flow, ArmorIQ usage (SDK mode, one plan per session, variant B thresholds, approve flow), the four findings with quotes, run/test/deploy commands, screenshots.
+- `DEMO.md`: props checklist, the exact customer line per beat with the expected rail row, shot list with timings, fire recovery.
+- `SUBMISSION.md`: name and one-line pitch, a 210-word description, agent/MCP/ArmorIQ usage, links. Video link is a placeholder.
+
+### Left for the human
+
+- Film the 90 s video from `DEMO.md`; `SUBMISSION.md` has the placeholder link.
+- Glance at `#counter-approvals` to see the cards. The API cannot list them (scope), so the log line above is the machine-readable proof.
+- No ArmorIQ delegations are pending from any run in this section (beats cleanup printed none; the probes rejected theirs).
