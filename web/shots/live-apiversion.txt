@@ -1,0 +1,22 @@
+{
+ "v1alpha": {
+  "version": "v1alpha",
+  "setupComplete": true,
+  "firstMessages": [
+   "setupComplete"
+  ],
+  "events": [
+   "socket open"
+  ]
+ },
+ "v1beta": {
+  "version": "v1beta",
+  "setupComplete": true,
+  "firstMessages": [
+   "setupComplete"
+  ],
+  "events": [
+   "socket open"
+  ]
+ }
+}

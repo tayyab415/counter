@@ -1,0 +1,10 @@
+01:55:48  session ses-2bc6b2c569b911e3 as counter@shop
+01:55:48  sse open for ses-2bc6b2c569b911e3
+01:55:48  gemini live connect: gemini-3.1-flash-live-preview (httpOptions.apiVersion=v1alpha, ephemeral token 76 chars)
+01:55:49  gemini live socket open
+01:55:51  mic on, 16-bit PCM @ 16000 Hz via AudioWorklet
+01:55:51  camera on
+01:55:52  audio out context @ 24000 Hz
+01:55:52  typed turn sent to Gemini
+01:55:53  tool get_order → delivered (allow, 913 ms)
+01:55:55  tile swap: customer camera takes the big tile
