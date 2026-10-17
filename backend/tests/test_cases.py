@@ -199,7 +199,7 @@ async def test_money_tools_must_use_the_case_order(world):
     # refund_to_account stays out of shop rules so ArmorIQ's policy block shows
     world.armor.rules = {"refund_to_account": "block"}
     r = await call(world, s, "refund_to_account", {"order_id": "1042", "amount": 45, "account": "MC 7741"})
-    assert r["decision"]["layer"] == "ARMORIQ" and r["decision"]["reason"] == "tool_not_in_allowlist"
+    assert r["decision"]["layer"] == "ARMORIQ" and r["decision"]["armoriq_reason"] == "tool_not_in_allowlist"
 
 
 async def test_exchange_case_binds_process_exchange_to_its_order(world):

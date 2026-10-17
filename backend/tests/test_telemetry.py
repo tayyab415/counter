@@ -60,6 +60,36 @@ def test_policy_reasons_in_plain_words():
     assert describe("something new") == "something new"
 
 
+def test_v1_policy_reasons_in_plain_words():
+    # armor.io/v1 on api.armoriq.ai answers with these instead of v2 rule ids
+    from counter_backend.armor import describe
+    assert describe("allow_with_logging") == "allowed (allow_with_logging)"
+    assert describe("allow_with_logging", "get_order") == "allowed (allow_with_logging)"
+    for tool in ("issue_refund", "process_exchange", "issue_payout", "counter__issue_payout"):
+        assert describe("allow_with_logging", tool) == "up to $100, allowed (allow_with_logging)"
+    assert describe("amount_requires_approval") == "over $100 needs the owner (amount_requires_approval)"
+    assert describe("amount_exceeds_max") == "over $350, the counter can't (amount_exceeds_max)"
+    assert describe("tool_not_in_allowlist") == "the counter may never use this (tool_not_in_allowlist)"
+    assert describe("enforcement_passed") == "owner: every tool allowed (enforcement_passed)"
+    assert describe("approved_delegation") == "approved by the owner (approved_delegation)"
+    assert describe("delegation_rejected") == \
+        "the owner said no earlier in this conversation (delegation_rejected)"
+    assert describe("tool-not-in-plan: 'counter__issue_payout' was not declared in the captured plan",
+                    "issue_payout") == "not in the plan for this case: intent drift (tool-not-in-plan)"
+    assert describe("") == "" and describe("enforce-unavailable: boom") == "enforce-unavailable: boom"
+
+
+async def test_gate_passes_the_tool_so_money_allows_read_up_to_100(world):
+    s = world.add_session()
+    r = await call(world, s, "issue_refund", {"order_id": "1101", "amount": 45, "reason": "r"})
+    assert r["decision"]["reason"] == "up to $100, allowed (allow_with_logging)"
+    r = await call(world, s, "get_order", {"order_id": "1101"})
+    assert r["decision"]["reason"] == "allowed (allow_with_logging)"
+    world.armor.rules = {"issue_payout": "hold"}
+    r = await call(world, s, "issue_payout", {"customer_id": "C-311", "amount": 170, "reason": "r"})
+    assert r["response"]["reason"] == "over $100 needs the owner (amount_requires_approval)"
+
+
 async def test_gemini_usage_recorded_on_the_session(world):
     s = world.add_session()
     r = await world.client.post("/api/usage", json={"session_id": s.session_id, "input_tokens": 812,

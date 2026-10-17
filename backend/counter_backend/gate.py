@@ -348,7 +348,7 @@ class Gate:
                        "status": "waiting", "created_ts": now_iso(), "customer_said": customer_said}
             self.store.pending[pending["pending_id"]] = pending
             response = {"status": "held_for_approval", "decided_by": "ArmorIQ",
-                        "reason": describe(chk.reason) or "over $100 needs the owner", "owner_paged": True,
+                        "reason": describe(chk.reason, name) or "over $100 needs the owner", "owner_paged": True,
                         "note": HOLD_NOTE}
             decision = self._decision(session, name, args, "ARMORIQ", "hold", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason,
@@ -361,7 +361,7 @@ class Gate:
 
         if chk.action != "allow" or not chk.allowed:
             response = {"status": "blocked_by_policy", "decided_by": "ArmorIQ",
-                        "reason": describe(chk.reason) or "blocked", "note": BLOCK_NOTE}
+                        "reason": describe(chk.reason, name) or "blocked", "note": BLOCK_NOTE}
             if is_drift(chk.reason):
                 response["note"] = drift_note(session, name)
                 response["open_case"] = cases.describe_case(session.plan)
@@ -387,7 +387,7 @@ class Gate:
         self._armor_task(session, "report", name, args, full, ms=self._ms(t_tool))
         self._note_result(session, name, args, full)
         response = self._shape_response(name, full)
-        decision = self._decision(session, name, args, "ARMORIQ", "allow", describe(chk.reason) or "allowed",
+        decision = self._decision(session, name, args, "ARMORIQ", "allow", describe(chk.reason, name) or "allowed",
                                   self._ms(t0), armoriq_reason=chk.reason, result=response)
         await self._finish(session, response, decision, name, args, full)
         if isinstance(full, dict) and "error" not in full:
@@ -432,7 +432,7 @@ class Gate:
         p["resolved_ts"] = now_iso()
         self._note_result(session, p["tool"], p["args"], result)
         decision = self._decision(session, p["tool"], p["args"], "ARMORIQ", "allow",
-                                  describe(chk.reason) or "approved by the owner", self._ms(t0),
+                                  describe(chk.reason, p["tool"]) or "approved by the owner", self._ms(t0),
                                   armoriq_reason=chk.reason, delegation_id=p["delegation_id"],
                                   pending_id=pending_id, result=result)
         await self._finish(session, result, decision, p["tool"], p["args"], result)

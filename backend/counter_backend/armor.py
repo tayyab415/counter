@@ -34,15 +34,27 @@ def is_drift(reason: str | None) -> bool:
     return str(reason or "").startswith(DRIFT_PREFIX)
 
 
-def describe(reason: str) -> str:
-    """counter-policy rule ids in plain words, the raw id kept in brackets so it
-    matches the ArmorIQ console: "hold:process_exchange#1" ->
-    "over $100 needs the owner (hold:process_exchange#1)". Anything unknown comes
-    back as the raw reason."""
+# armor.io/v1 policy (platform.armoriq.ai, api.armoriq.ai) answers with these
+V1_REASONS = {"amount_requires_approval": "over $100 needs the owner",
+              "amount_exceeds_max": "over $350, the counter can't",
+              "tool_not_in_allowlist": "the counter may never use this",
+              "enforcement_passed": "owner: every tool allowed"}
+
+
+def describe(reason: str, tool: str | None = None) -> str:
+    """ArmorIQ reasons in plain words, the raw reason kept in brackets so it
+    matches the ArmorIQ console. v2 rule ids ("hold:process_exchange#1" ->
+    "over $100 needs the owner (hold:process_exchange#1)") and v1 reasons
+    ("amount_requires_approval" -> "over $100 needs the owner (amount_requires_approval)").
+    `tool` lets a v1 `allow_with_logging` on a money tool read "up to $100, allowed".
+    Anything unknown comes back as the raw reason."""
     if is_drift(reason):
         return DRIFT_WORDS
     words = {"approved_delegation": "approved by the owner",
              "delegation_rejected": "the owner said no earlier in this conversation"}.get(reason)
+    words = words or V1_REASONS.get(reason)
+    if reason == "allow_with_logging":
+        words = "up to $100, allowed" if (tool or "").removeprefix("counter__") in MONEY_RULES else "allowed"
     m = _RULE.match(reason or "")
     if m:
         verdict, tool, variant = m.group(1), m.group(2), int(m.group(3))

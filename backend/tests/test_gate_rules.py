@@ -127,7 +127,7 @@ async def test_refunded_rule_leaves_refund_to_account_alone(world):
     await call(world, s, "issue_refund", {"order_id": "1101", "amount": 45, "reason": "return"})
     r = await call(world, s, "refund_to_account", {"order_id": "1101", "amount": 45, "account": "Mastercard ending 7741"})
     assert r["decision"]["layer"] == "ARMORIQ" and r["decision"]["action"] == "block"
-    assert r["response"]["reason"] == "tool_not_in_allowlist"
+    assert r["response"]["reason"] == "the counter may never use this (tool_not_in_allowlist)"
 
 
 async def test_owner_refund_to_account_marks_order_refunded(world):
@@ -196,7 +196,7 @@ async def test_allow_hold_block_mapping(world):
     r = await call(world, s, "match_competitor_quote", {"competitor": "GadgetCash", "amount": 420})
     assert r["response"]["status"] == "blocked_by_policy"
     assert r["response"]["decided_by"] == "ArmorIQ"
-    assert r["response"]["reason"] == "tool_not_in_allowlist"
+    assert r["response"]["reason"] == "the counter may never use this (tool_not_in_allowlist)"
     assert r["response"]["note"] == "This account can't do this. Offer what you can do instead."
     assert r["decision"]["action"] == "block"
     assert r["decision"]["armoriq_reason"] == "tool_not_in_allowlist"
