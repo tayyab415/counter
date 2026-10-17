@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.expanduser(os.environ.get("COUNTER_ENV_FILE", "~/.config/counter/.env")))
 
 BACKEND = os.environ.get("COUNTER_BACKEND", "http://127.0.0.1:8000").rstrip("/")
-ARMORIQ = os.environ.get("ARMORIQ_BACKEND", "https://api.armoriq.ai").rstrip("/")
+ARMORIQ = os.environ.get("ARMORIQ_BACKEND", os.environ.get("BACKEND_ENDPOINT", "https://api.armoriq.ai")).rstrip("/")
 API_KEY = os.environ.get("ARMORIQ_API_KEY", "")
 LOGIN = os.environ.get("ARMORIQ_LOGIN", "")
 OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "")

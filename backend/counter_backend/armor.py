@@ -1,18 +1,48 @@
 """ArmorIQ gate: one session + plan per identity, checks, delegation approve/reject.
 
-The SDK is sync; every call runs in a thread. `mode="sdk"`, policy variant B is
-checked by the org (probe-org / counter-policy).
+The SDK is sync; every call runs in a thread. `mode="sdk"`, policy `counter-policy`
+(armor.io/v2, `deploy/armoriq/counter-policy.v2.json`) in the ArmorTools workspace.
+Telemetry is on: each customer conversation is one session in the console at
+tools.armoriq.ai, with every check and every tool run on it.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+import uuid
 from dataclasses import dataclass
 
 import httpx
 
 log = logging.getLogger("counter.armor")
+
+
+MONEY_RULES = {"issue_payout", "issue_refund", "process_exchange"}
+NEVER_COUNTER = {"match_competitor_quote", "waive_lock_check", "refund_to_account"}
+_RULE = re.compile(r"^(allow|hold|block):([a-z_.]+)#(\d+)$")
+
+
+def describe(reason: str) -> str:
+    """counter-policy rule ids in plain words, the raw id kept in brackets so it
+    matches the ArmorIQ console: "hold:process_exchange#1" ->
+    "over $100 needs the owner (hold:process_exchange#1)"."""
+    words = {"approved_delegation": "approved by the owner",
+             "delegation_rejected": "the owner said no earlier in this conversation"}.get(reason)
+    m = _RULE.match(reason or "")
+    if m:
+        verdict, tool, variant = m.group(1), m.group(2), int(m.group(3))
+        if tool == "tools.default":
+            words = "owner: every tool allowed" if verdict == "allow" else None
+        elif tool in MONEY_RULES:
+            words = {0: "over $350, the counter can't", 1: "over $100 needs the owner",
+                     2: "up to $100, allowed"}.get(variant)
+        elif tool in NEVER_COUNTER:
+            words = "the counter may never use this"
+        else:
+            words = "allowed" if verdict == "allow" else None
+    return f"{words} ({reason})" if words else reason
 
 
 @dataclass
@@ -27,34 +57,132 @@ class Check:
 class ArmorIQSession:
     """One ArmorIQ session for one identity, with its plan already started."""
 
-    def __init__(self, session, email: str, plan_id: str | None = None):
+    def __init__(self, session, email: str, plan_id: str | None = None, trace_id: str | None = None):
         self._session = session
         self.email = email
         self.plan_id = plan_id
+        self.trace_id = trace_id  # the session UUID shown in the ArmorIQ console
+        # one SDK call sequence at a time per session. A flush ends the console's
+        # current trace, so a flush from another call between this call's check and
+        # its report would split the call across two turns.
+        self._lock = asyncio.Lock()
+
+    def turn(self) -> "Turn":
+        """`async with session.turn() as t:` for one tool call: check, run, report."""
+        return Turn(self)
 
     async def check(self, tool: str, args: dict, user_email: str | None = None) -> Check:
+        async with self.turn() as t:
+            return await t.check(tool, args, user_email)
+
+    def _check(self, tool: str, args: dict, user_email: str | None) -> Check:
         name = tool if tool.startswith("counter__") else f"counter__{tool}"
-        r = await asyncio.to_thread(self._session.check, name, dict(args or {}),
-                                    user_email=user_email or self.email)
+        r = self._session.check(name, dict(args or {}), user_email=user_email or self.email)
         return Check(allowed=bool(r.allowed), action=str(r.action), reason=str(r.reason or ""),
                      delegation_id=getattr(r, "delegation_id", None),
                      matched_policy=getattr(r, "matched_policy", None))
+
+    def _ship(self, report: dict | None) -> None:
+        """Record the tool run (if any) on the console's call ledger, then flush."""
+        if report is not None:
+            from armoriq_sdk.session import ReportOptions
+
+            tool = report["tool"]
+            name = tool if tool.startswith("counter__") else f"counter__{tool}"
+            opts = ReportOptions(status="success" if report["ok"] else "error",
+                                 error_message=report["error"], duration_ms=report["ms"],
+                                 is_delegated=report["delegated"] or None)
+            try:
+                self._session.report(name, dict(report["args"] or {}), report["result"], opts)
+            except Exception as e:
+                log.warning("ArmorIQ report failed for %s: %s", tool, type(e).__name__)
+        self._session.flush_observability()
+
+    async def _locked(self, label: str, fn, *args) -> None:
+        try:
+            async with self._lock:
+                await asyncio.to_thread(fn, *args)
+        except Exception as e:
+            log.warning("ArmorIQ %s failed: %s", label, type(e).__name__)
+
+    async def record_generation(self, model: str, input_tokens: int, output_tokens: int,
+                                cached_tokens: int = 0) -> None:
+        """One Gemini turn's token counts, so the console shows usage per session."""
+        def run():
+            self._session.record_generation(model=model, input_tokens=int(input_tokens),
+                                            output_tokens=int(output_tokens),
+                                            cache_read_tokens=int(cached_tokens), cache_write_tokens=0,
+                                            prompt=None, completion=None, finish_reason="stop")
+            self._session.flush_observability()
+
+        await self._locked("record_generation", run)
+
+    async def flush(self) -> None:
+        await self._locked("flush", self._session.flush_observability)
+
+    async def close(self) -> None:
+        """End the trace, stop the SDK's shipper thread, final flush. Checks still work after."""
+        await self._locked("close", self._session.close)
+
+
+_SHIPPING: set[asyncio.Task] = set()
+
+
+class Turn:
+    """One tool call on the console: its check, the tool run and the flush, with the
+    session to itself. The report and flush ship after the block exits, off the
+    request path; the session stays locked until they are done."""
+
+    def __init__(self, s: ArmorIQSession):
+        self._s = s
+        self._report: dict | None = None
+
+    async def __aenter__(self) -> "Turn":
+        await self._s._lock.acquire()
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        task = asyncio.create_task(self._finish(self._report))
+        _SHIPPING.add(task)
+        task.add_done_callback(_SHIPPING.discard)
+        return False
+
+    async def _finish(self, report: dict | None) -> None:
+        try:
+            await asyncio.to_thread(self._s._ship, report)
+        except Exception as e:
+            log.warning("ArmorIQ flush failed: %s", type(e).__name__)
+        finally:
+            self._s._lock.release()
+
+    async def check(self, tool: str, args: dict, user_email: str | None = None) -> Check:
+        return await asyncio.to_thread(self._s._check, tool, args, user_email)
+
+    def report(self, tool: str, args: dict, result: object, ok: bool = True,
+               error: str | None = None, ms: float | None = None, delegated: bool = False) -> None:
+        """The tool run, shipped with this turn's flush when the block exits."""
+        self._report = {"tool": tool, "args": args, "result": result, "ok": ok, "error": error,
+                        "ms": ms, "delegated": delegated}
 
 
 class ArmorIQLayer:
     """Creates ArmorIQ sessions and calls the delegation endpoints."""
 
-    def __init__(self, api_key: str, login: str, backend: str = "https://api.armoriq.ai"):
+    def __init__(self, api_key: str, login: str, backend: str = "https://api.armoriq.ai",
+                 iap: str | None = None, agent_id: str = "counter-front-desk", telemetry: bool = True):
         if not api_key:
             raise RuntimeError("ARMORIQ_API_KEY is not set (add it to ~/.config/counter/.env)")
         if not login:
             raise RuntimeError("ARMORIQ_LOGIN is not set (add it to ~/.config/counter/.env)")
         from armoriq_sdk import ArmorIQClient
 
-        self._client = ArmorIQClient(api_key=api_key)
+        self.backend = backend.rstrip("/")
+        self._client = ArmorIQClient(api_key=api_key, backend_endpoint=self.backend,
+                                     iap_endpoint=iap or None, agent_id=agent_id)
         self._api_key = api_key
         self.login = login
-        self.backend = backend.rstrip("/")
+        self.agent_id = agent_id
+        self.telemetry = telemetry
 
     async def start_session(self, email: str) -> ArmorIQSession:
         return await asyncio.to_thread(self._start, email)
@@ -64,18 +192,18 @@ class ArmorIQLayer:
 
         from .tools import PLAN_ARGS, TOOL_NAMES
 
-        opts = SessionOptions(mode="sdk", default_mcp_name="counter", validity_seconds=3600)
-        try:
-            opts.observability = ObservabilityConfig(enabled=False)
-        except Exception:  # pragma: no cover - SDK shape guard
-            pass
+        trace_id = str(uuid.uuid4())
+        opts = SessionOptions(mode="sdk", default_mcp_name="counter", validity_seconds=3600,
+                              session_id=trace_id, llm="gemini-3.1-flash-live-preview")
+        opts.observability = ObservabilityConfig(enabled=self.telemetry, endpoint=self.backend,
+                                                 product="counter", agent_id=self.agent_id)
         plan = [{"name": f"counter__{t}", "args": PLAN_ARGS[t]} for t in TOOL_NAMES]
         last: Exception | None = None
         for attempt in range(2):
             try:
                 session = self._client.for_user(email).start_session(opts)
                 tok = session.start_plan(plan, goal="counter front desk")
-                return ArmorIQSession(session, email, plan_id=getattr(tok, "plan_id", None))
+                return ArmorIQSession(session, email, plan_id=getattr(tok, "plan_id", None), trace_id=trace_id)
             except Exception as e:  # retry once: a stale rejection can fail the first plan
                 last = e
                 log.warning("ArmorIQ start_plan attempt %d failed: %s", attempt + 1, type(e).__name__)

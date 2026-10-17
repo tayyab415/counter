@@ -10,6 +10,7 @@ import logging
 import time
 
 from . import rules
+from .armor import describe
 from .store import CounterSession, Store, new_id, now_iso, pending_view
 from .tools import TOOL_NAMES_SET
 
@@ -17,6 +18,7 @@ log = logging.getLogger("counter.gate")
 
 HOLD_NOTE = "Tell the customer the owner has to approve this; it is not done yet."
 BLOCK_NOTE = "This account can't do this. Offer what you can do instead."
+IDLE_S = 30 * 60  # a conversation with no tool call or usage for this long is over
 
 SERIAL_TOOLS = rules.SERIAL_TOOLS
 MONEY_TOOLS = rules.MONEY_TOOLS
@@ -48,6 +50,7 @@ class Gate:
         self.mcp = mcp
         self.slack = slack
         self._tasks: set[asyncio.Task] = set()
+        self.idle_s = IDLE_S
 
     # ---------------------------------------------------------------- helpers
     @staticmethod
@@ -178,6 +181,45 @@ class Gate:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    # ---------------------------------------------------------------- ArmorIQ console
+    def _armor_task(self, session: CounterSession, method: str, *args, **kwargs) -> None:
+        """Ship telemetry for this call to the ArmorIQ console, off the request path."""
+        fn = getattr(session.armor_session, method, None)
+        if fn is None:
+            return
+        task = asyncio.create_task(fn(*args, **kwargs))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def record_usage(self, session: CounterSession, input_tokens: int, output_tokens: int,
+                     cached_tokens: int = 0) -> None:
+        session.last_seen = time.monotonic()
+        self._armor_task(session, "record_generation", self.settings.gemini_model, input_tokens,
+                         output_tokens, cached_tokens)
+
+    # ---------------------------------------------------------------- call end
+    def end_session(self, session: CounterSession) -> None:
+        """The call is over. Close its ArmorIQ session (that stops the SDK's shipper
+        thread) and forget it, unless a hold is still waiting for the owner."""
+        session.ended = True
+        self._retire(session)
+
+    def expire_idle(self) -> None:
+        """End conversations whose page closed without saying so."""
+        cutoff = time.monotonic() - self.idle_s
+        for s in list(self.store.sessions.values()):
+            if s.last_seen < cutoff:
+                self.end_session(s)
+
+    def _retire(self, session: CounterSession | None) -> None:
+        if session is None or not session.ended or session.active:
+            return  # a call still running may yet create a hold that needs this session
+        if any(p["session_id"] == session.session_id and p["status"] in ("waiting", "approved")
+               for p in self.store.pending.values()):
+            return  # the approval needs this session; retire it once the hold resolves
+        if self.store.sessions.pop(session.session_id, None) is not None:
+            self._armor_task(session, "close")
+
     async def _slack_call(self, method: str, *args) -> None:
         try:
             fn = getattr(self.slack, method)
@@ -189,7 +231,17 @@ class Gate:
     async def handle_tool(self, session: CounterSession, name: str, args: dict, camera_on: bool,
                           still_b64: str | None = None, call_id: str | None = None,
                           customer_said: str | None = None) -> dict:
+        session.active += 1
+        try:
+            return await self._handle_tool(session, name, args, camera_on, still_b64, customer_said)
+        finally:
+            session.active -= 1
+            self._retire(session)
+
+    async def _handle_tool(self, session: CounterSession, name: str, args: dict, camera_on: bool,
+                           still_b64: str | None, customer_said: str | None) -> dict:
         t0 = time.perf_counter()
+        session.last_seen = time.monotonic()
         args = dict(args or {})
         still = decode_still(still_b64)
 
@@ -206,9 +258,18 @@ class Gate:
         if reason:
             return await self._refuse(session, name, args, reason, t0)
 
-        # 3. ArmorIQ
+        # ArmorIQ compares numbers: a "170" string would skip the hold rule, so send 170.
+        if name in MONEY_TOOLS:
+            amt = rules.num(args.get("amount"))
+            args["amount"] = int(amt) if amt == int(amt) else amt
+
+        # 3. ArmorIQ, then 4. the tool, as one turn on the console
+        async with session.armor_session.turn() as turn:
+            return await self._checked_call(session, turn, name, args, still, customer_said, t0)
+
+    async def _checked_call(self, session, turn, name, args, still, customer_said, t0) -> dict:
         try:
-            chk = await session.armor_session.check(name, args, user_email=session.identity)
+            chk = await turn.check(name, args, user_email=session.identity)
         except Exception as e:
             log.warning("ArmorIQ check failed for %s: %s", name, type(e).__name__)
             response = {"status": "blocked_by_policy", "decided_by": "ArmorIQ",
@@ -224,7 +285,7 @@ class Gate:
                        "status": "waiting", "created_ts": now_iso(), "customer_said": customer_said}
             self.store.pending[pending["pending_id"]] = pending
             response = {"status": "held_for_approval", "decided_by": "ArmorIQ",
-                        "reason": chk.reason or "amount_requires_approval", "owner_paged": True,
+                        "reason": describe(chk.reason) or "over $100 needs the owner", "owner_paged": True,
                         "note": HOLD_NOTE}
             decision = self._decision(session, name, args, "ARMORIQ", "hold", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason,
@@ -236,25 +297,27 @@ class Gate:
 
         if chk.action != "allow" or not chk.allowed:
             response = {"status": "blocked_by_policy", "decided_by": "ArmorIQ",
-                        "reason": chk.reason or "blocked", "note": BLOCK_NOTE}
+                        "reason": describe(chk.reason) or "blocked", "note": BLOCK_NOTE}
             decision = self._decision(session, name, args, "ARMORIQ", "block", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason)
             await self._finish(session, response, decision, name, args, None)
             return {"response": response, "decision": decision}
 
-        # 4. the MCP tool runs
+        t_tool = time.perf_counter()
         try:
             full = await self.mcp.call_tool(name, args)
         except Exception as e:
             log.warning("MCP call failed for %s: %s", name, type(e).__name__)
+            turn.report(name, args, None, ok=False, error=type(e).__name__, ms=self._ms(t_tool))
             response = {"status": "error", "reason": "tool call failed"}
             decision = self._decision(session, name, args, "ARMORIQ", "block", "tool call failed",
                                       self._ms(t0), armoriq_reason=f"{type(e).__name__}: {e}")
             await self._finish(session, response, decision, name, args, None)
             return {"response": response, "decision": decision}
+        turn.report(name, args, full, ms=self._ms(t_tool))
         self._note_result(session, name, args, full)
         response = self._shape_response(name, full)
-        decision = self._decision(session, name, args, "ARMORIQ", "allow", chk.reason or "allowed",
+        decision = self._decision(session, name, args, "ARMORIQ", "allow", describe(chk.reason) or "allowed",
                                   self._ms(t0), armoriq_reason=chk.reason, result=response)
         await self._finish(session, response, decision, name, args, full)
         return {"response": response, "decision": decision}
@@ -277,22 +340,27 @@ class Gate:
         if not (200 <= int(status) < 300):
             return self._fail_pending(p, f"ArmorIQ approve returned {status}")
         p["armoriq_approve_status"] = int(status)
-        try:
-            chk = await session.armor_session.check(p["tool"], p["args"], user_email=session.identity)
-        except Exception as e:
-            return self._fail_pending(p, f"re-check failed: {type(e).__name__}")
-        if chk.action != "allow" or not chk.allowed:
-            return self._fail_pending(p, f"re-check did not allow: {chk.reason or chk.action}")
-        try:
-            result = await self.mcp.call_tool(p["tool"], p["args"])
-        except Exception as e:
-            return self._fail_pending(p, f"tool call failed: {type(e).__name__}")
+        async with session.armor_session.turn() as turn:
+            try:
+                chk = await turn.check(p["tool"], p["args"], user_email=session.identity)
+            except Exception as e:
+                return self._fail_pending(p, f"re-check failed: {type(e).__name__}")
+            if chk.action != "allow" or not chk.allowed:
+                return self._fail_pending(p, f"re-check did not allow: {chk.reason or chk.action}")
+            t_tool = time.perf_counter()
+            try:
+                result = await self.mcp.call_tool(p["tool"], p["args"])
+            except Exception as e:
+                turn.report(p["tool"], p["args"], None, ok=False, error=type(e).__name__,
+                            ms=self._ms(t_tool), delegated=True)
+                return self._fail_pending(p, f"tool call failed: {type(e).__name__}")
+            turn.report(p["tool"], p["args"], result, ms=self._ms(t_tool), delegated=True)
         p["status"] = "executed"
         p["result"] = result
         p["resolved_ts"] = now_iso()
         self._note_result(session, p["tool"], p["args"], result)
         decision = self._decision(session, p["tool"], p["args"], "ARMORIQ", "allow",
-                                  chk.reason or "approved by the owner", self._ms(t0),
+                                  describe(chk.reason) or "approved by the owner", self._ms(t0),
                                   armoriq_reason=chk.reason, delegation_id=p["delegation_id"],
                                   pending_id=pending_id, result=result)
         await self._finish(session, result, decision, p["tool"], p["args"], result)
@@ -300,6 +368,7 @@ class Gate:
                            {"pending_id": pending_id, "session_id": session.session_id,
                             "status": "executed", "tool": p["tool"], "result": result})
         self._slack_task("update_hold", pending_view(p))
+        self._retire(session)
         return p
 
     def _fail_pending(self, p: dict, reason: str) -> dict:
@@ -316,6 +385,7 @@ class Gate:
             self.store.publish(session.session_id, "case",
                                {"session_id": session.session_id, "case": session.case})
         self._slack_task("update_hold", pending_view(p))
+        self._retire(session)
         return p
 
     async def reject(self, pending_id: str, approver_name: str = "owner",
@@ -342,6 +412,7 @@ class Gate:
                            {"pending_id": pending_id, "session_id": p["session_id"],
                             "status": "rejected", "tool": p["tool"]})
         self._slack_task("update_hold", pending_view(p))
+        self._retire(session)
         return p
 
     # ---------------------------------------------------------------- reset
@@ -351,6 +422,8 @@ class Gate:
             ok = await self.mcp.reset()
         except Exception as e:
             log.warning("MCP reset failed: %s", type(e).__name__)
+        for s in list(self.store.sessions.values()):
+            self._armor_task(s, "close")
         self.store.refunded_orders.clear()
         self.store.pending.clear()
         self.store.decisions.clear()

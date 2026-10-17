@@ -44,12 +44,25 @@ class ToolBody(BaseModel):
     customer_said: str | None = None
 
 
+class EndBody(BaseModel):
+    session_id: str
+
+
+class UsageBody(BaseModel):
+    session_id: str
+    input_tokens: int = Field(default=0, ge=0, le=2_000_000)
+    output_tokens: int = Field(default=0, ge=0, le=2_000_000)
+    cached_tokens: int = Field(default=0, ge=0, le=2_000_000)
+
+
 def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=None,
                token_minter=None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = Store()
     if armor is None:
-        armor = ArmorIQLayer(settings.armor_api_key, settings.armor_login, settings.armor_backend)
+        armor = ArmorIQLayer(settings.armor_api_key, settings.armor_login, settings.armor_backend,
+                             iap=settings.armor_iap, agent_id=settings.armor_agent_id,
+                             telemetry=settings.armor_telemetry)
     if mcp is None:
         mcp = MCPToolClient(settings.mcp_url, settings.mcp_token)
     gate = Gate(settings, store, armor, mcp, slack=slack)
@@ -123,6 +136,7 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
             owner_token = secrets.token_urlsafe(32)
         else:
             raise HTTPException(status_code=400, detail="role must be 'counter' or 'owner'")
+        gate.expire_idle()
         try:
             armor_session = await armor.start_session(identity)
         except Exception as e:
@@ -146,6 +160,15 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
             payload["owner_token"] = owner_token
         return payload
 
+    @app.post("/api/session/end")
+    async def api_session_end(body: EndBody):
+        """The page is closing: end the call so its ArmorIQ session closes."""
+        session = store.sessions.get(body.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        gate.end_session(session)
+        return {"ok": True}
+
     # ------------------------------------------------------------ tool call
     @app.post("/api/tool")
     async def api_tool(body: ToolBody):
@@ -154,6 +177,16 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
             raise HTTPException(status_code=404, detail="unknown session")
         return await gate.handle_tool(session, body.name, body.args, body.camera_on,
                                       body.still, body.call_id, body.customer_said)
+
+    # ------------------------------------------------------------ model usage
+    @app.post("/api/usage")
+    async def api_usage(body: UsageBody):
+        """Gemini token counts for one turn, recorded on the ArmorIQ session."""
+        session = store.sessions.get(body.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        gate.record_usage(session, body.input_tokens, body.output_tokens, body.cached_tokens)
+        return {"ok": True}
 
     # ------------------------------------------------------------ pending
     @app.get("/api/pending")

@@ -50,6 +50,41 @@ class FakeArmorSession:
             return Check(allowed=False, action="block", reason="tool_not_in_allowlist")
         return Check(allowed=True, action="allow", reason="allow_with_logging")
 
+    def turn(self) -> "FakeTurn":
+        return FakeTurn(self)
+
+    async def flush(self):
+        self.layer.flushes += 1
+
+    async def record_generation(self, model, input_tokens, output_tokens, cached_tokens=0):
+        self.layer.usage.append((model, input_tokens, output_tokens, cached_tokens))
+
+    async def close(self):
+        self.layer.closed += 1
+
+
+class FakeTurn:
+    """Like armor.Turn: the report and a flush are sent when the block exits."""
+
+    def __init__(self, s: FakeArmorSession):
+        self.s = s
+        self._report = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        if self._report is not None:
+            self.s.layer.reports.append(self._report)
+        self.s.layer.flushes += 1
+        return False
+
+    async def check(self, tool, args, user_email=None):
+        return await self.s.check(tool, args, user_email)
+
+    def report(self, tool, args, result, ok=True, error=None, ms=None, delegated=False):
+        self._report = (tool, dict(args or {}), ok, delegated)
+
 
 class FakeArmor:
     def __init__(self):
@@ -62,6 +97,10 @@ class FakeArmor:
         self.approved_tools: set[str] = set()
         self.approved: list[str] = []
         self.rejected: list[tuple[str, str]] = []
+        self.reports: list[tuple] = []           # (tool, args, ok, delegated) sent to the console
+        self.flushes = 0
+        self.usage: list[tuple] = []
+        self.closed = 0
 
     async def start_session(self, email: str) -> FakeArmorSession:
         s = FakeArmorSession(self, email)

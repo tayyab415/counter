@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -25,6 +26,9 @@ class CounterSession:
     owner_token: str | None = None
     armor_session: object | None = None
     created_ts: str = field(default_factory=now_iso)
+    last_seen: float = field(default_factory=time.monotonic)  # last tool call or usage
+    ended: bool = False           # the page said the call is over, or it went idle
+    active: int = 0               # tool calls in flight; retire waits for them
     # order_id -> serial_seen, recorded by this session's record_inspection
     inspections: dict[str, str] = field(default_factory=dict)
     case: dict = field(default_factory=lambda: {"kind": None, "order": None, "inspection": None, "outcome": None})

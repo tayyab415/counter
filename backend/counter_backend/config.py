@@ -18,8 +18,14 @@ REPO_DIR = BACKEND_DIR.parent
 class Settings:
     armor_api_key: str = field(default_factory=lambda: os.environ.get("ARMORIQ_API_KEY", ""))
     armor_login: str = field(default_factory=lambda: os.environ.get("ARMORIQ_LOGIN", ""))
-    # ArmorIQ HTTP backend, used for /delegation/approve and /delegation/reject
-    armor_backend: str = field(default_factory=lambda: os.environ.get("ARMORIQ_BACKEND", "https://api.armoriq.ai"))
+    # ArmorIQ backend: SDK checks, telemetry, /delegation/approve and /delegation/reject.
+    # The ArmorTools workspace (tools.armoriq.ai) lives on staging-api.armoriq.io.
+    armor_backend: str = field(default_factory=lambda: os.environ.get(
+        "ARMORIQ_BACKEND", os.environ.get("BACKEND_ENDPOINT", "https://api.armoriq.ai")))
+    armor_iap: str = field(default_factory=lambda: os.environ.get("IAP_ENDPOINT", ""))
+    armor_agent_id: str = field(default_factory=lambda: os.environ.get("ARMORIQ_AGENT_ID", "counter-front-desk"))
+    # ship checks and tool runs to the ArmorIQ console (ARMORIQ_TELEMETRY=0 turns it off)
+    armor_telemetry: bool = field(default_factory=lambda: os.environ.get("ARMORIQ_TELEMETRY", "1") not in ("0", "false", "off", "no"))
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
     owner_password: str = field(default_factory=lambda: os.environ.get("OWNER_PASSWORD", ""))
     mcp_token: str = field(default_factory=lambda: os.environ.get("MCP_TOKEN", ""))

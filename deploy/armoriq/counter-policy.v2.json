@@ -1,0 +1,40 @@
+{
+  "apiVersion": "armor.io/v2",
+  "kind": "Policy",
+  "metadata": {"name": "counter-policy"},
+  "target": {"agent": "<AGENT_ID>"},
+  "spec": {
+    "approvalDefaults": {"approvers": 1, "roles": ["org_admin"]},
+    "tools": {
+      "default": "block",
+      "rules": {
+        "lookup_price": "allow",
+        "get_order": "allow",
+        "record_inspection": "allow",
+        "notify_customer_on_file": "allow",
+        "page_owner": "allow",
+        "issue_payout": [
+          {"action": "block", "when": {"args.amount": {"gt": 350}}},
+          {"action": "hold", "when": {"args.amount": {"gt": 100}}},
+          {"action": "allow"}
+        ],
+        "issue_refund": [
+          {"action": "block", "when": {"args.amount": {"gt": 350}}},
+          {"action": "hold", "when": {"args.amount": {"gt": 100}}},
+          {"action": "allow"}
+        ],
+        "process_exchange": [
+          {"action": "block", "when": {"args.amount": {"gt": 350}}},
+          {"action": "hold", "when": {"args.amount": {"gt": 100}}},
+          {"action": "allow"}
+        ],
+        "match_competitor_quote": "block",
+        "waive_lock_check": "block",
+        "refund_to_account": "block"
+      }
+    },
+    "members": {
+      "<OWNER>": {"tools": {"default": "allow"}}
+    }
+  }
+}
