@@ -49,7 +49,9 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
     settings = settings or Settings.from_env()
     store = Store()
     if armor is None:
-        armor = ArmorIQLayer(settings.armor_api_key, settings.armor_login, settings.armor_backend)
+        armor = ArmorIQLayer(settings.armor_api_key, settings.armor_login, settings.armor_backend,
+                             iap=settings.armor_iap, agent_id=settings.armor_agent_id,
+                             telemetry=settings.armor_telemetry)
     if mcp is None:
         mcp = MCPToolClient(settings.mcp_url, settings.mcp_token)
     gate = Gate(settings, store, armor, mcp, slack=slack)

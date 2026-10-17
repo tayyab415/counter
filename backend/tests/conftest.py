@@ -50,6 +50,15 @@ class FakeArmorSession:
             return Check(allowed=False, action="block", reason="tool_not_in_allowlist")
         return Check(allowed=True, action="allow", reason="allow_with_logging")
 
+    async def report(self, tool, args, result, ok=True, error=None, ms=None, delegated=False):
+        self.layer.reports.append((tool, dict(args or {}), ok, delegated))
+
+    async def flush(self):
+        self.layer.flushes += 1
+
+    async def close(self):
+        self.layer.closed += 1
+
 
 class FakeArmor:
     def __init__(self):
@@ -62,6 +71,9 @@ class FakeArmor:
         self.approved_tools: set[str] = set()
         self.approved: list[str] = []
         self.rejected: list[tuple[str, str]] = []
+        self.reports: list[tuple] = []           # (tool, args, ok, delegated) sent to the console
+        self.flushes = 0
+        self.closed = 0
 
     async def start_session(self, email: str) -> FakeArmorSession:
         s = FakeArmorSession(self, email)

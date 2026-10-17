@@ -178,6 +178,16 @@ class Gate:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    # ---------------------------------------------------------------- ArmorIQ console
+    def _armor_task(self, session: CounterSession, method: str, *args, **kwargs) -> None:
+        """Ship telemetry for this call to the ArmorIQ console, off the request path."""
+        fn = getattr(session.armor_session, method, None)
+        if fn is None:
+            return
+        task = asyncio.create_task(fn(*args, **kwargs))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     async def _slack_call(self, method: str, *args) -> None:
         try:
             fn = getattr(self.slack, method)
@@ -206,6 +216,11 @@ class Gate:
         if reason:
             return await self._refuse(session, name, args, reason, t0)
 
+        # ArmorIQ compares numbers: a "170" string would skip the hold rule, so send 170.
+        if name in MONEY_TOOLS:
+            amt = rules.num(args.get("amount"))
+            args["amount"] = int(amt) if amt == int(amt) else amt
+
         # 3. ArmorIQ
         try:
             chk = await session.armor_session.check(name, args, user_email=session.identity)
@@ -230,6 +245,7 @@ class Gate:
                                       self._ms(t0), armoriq_reason=chk.reason,
                                       delegation_id=chk.delegation_id, pending_id=pending["pending_id"])
             await self._finish(session, response, decision, name, args, None)
+            self._armor_task(session, "flush")
             self.store.publish(session.session_id, "pending", pending_view(pending))
             self._slack_task("post_hold", pending_view(pending), still, customer_said)
             return {"response": response, "decision": decision}
@@ -240,18 +256,23 @@ class Gate:
             decision = self._decision(session, name, args, "ARMORIQ", "block", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason)
             await self._finish(session, response, decision, name, args, None)
+            self._armor_task(session, "flush")
             return {"response": response, "decision": decision}
 
         # 4. the MCP tool runs
+        t_tool = time.perf_counter()
         try:
             full = await self.mcp.call_tool(name, args)
         except Exception as e:
             log.warning("MCP call failed for %s: %s", name, type(e).__name__)
+            self._armor_task(session, "report", name, args, None, ok=False, error=type(e).__name__,
+                             ms=self._ms(t_tool))
             response = {"status": "error", "reason": "tool call failed"}
             decision = self._decision(session, name, args, "ARMORIQ", "block", "tool call failed",
                                       self._ms(t0), armoriq_reason=f"{type(e).__name__}: {e}")
             await self._finish(session, response, decision, name, args, None)
             return {"response": response, "decision": decision}
+        self._armor_task(session, "report", name, args, full, ms=self._ms(t_tool))
         self._note_result(session, name, args, full)
         response = self._shape_response(name, full)
         decision = self._decision(session, name, args, "ARMORIQ", "allow", chk.reason or "allowed",
@@ -283,10 +304,15 @@ class Gate:
             return self._fail_pending(p, f"re-check failed: {type(e).__name__}")
         if chk.action != "allow" or not chk.allowed:
             return self._fail_pending(p, f"re-check did not allow: {chk.reason or chk.action}")
+        t_tool = time.perf_counter()
         try:
             result = await self.mcp.call_tool(p["tool"], p["args"])
         except Exception as e:
+            self._armor_task(session, "report", p["tool"], p["args"], None, ok=False,
+                             error=type(e).__name__, ms=self._ms(t_tool), delegated=True)
             return self._fail_pending(p, f"tool call failed: {type(e).__name__}")
+        self._armor_task(session, "report", p["tool"], p["args"], result, ms=self._ms(t_tool),
+                         delegated=True)
         p["status"] = "executed"
         p["result"] = result
         p["resolved_ts"] = now_iso()
@@ -351,6 +377,8 @@ class Gate:
             ok = await self.mcp.reset()
         except Exception as e:
             log.warning("MCP reset failed: %s", type(e).__name__)
+        for s in list(self.store.sessions.values()):
+            self._armor_task(s, "close")
         self.store.refunded_orders.clear()
         self.store.pending.clear()
         self.store.decisions.clear()
