@@ -1011,3 +1011,107 @@ Every attempt was ArmorIQ `block tool-not-in-plan`. None ran, and no trial made 
 ### Known gap
 
 After the refund runs, the return case is closed and a `trade_in` case may open. In there, `issue_payout $90` is in the plan and under the limit. The model worked this out in run 1. nudge-v1#2 said "I've closed that case, so now I can open a new one to process the $90 payout for you. Shall I go ahead?" read-v1#0 said it would "try the payout separately", then opened a second return case and tried again (drift block again). In 6 longer runs where the customer kept pushing, it never called `open_case trade_in`. So I didn't see the payout go through, but nothing stops it. Fixes to consider: a shop rule that a payout can't exceed a `lookup_price` offer made in the same case, or one money case per conversation for the counter.
+
+## platform (2026-10-17, platform.armoriq.ai)
+
+The hackathon rules say enforcement must go through platform.armoriq.ai, with keys made there and agents and MCPs onboarded there. tools.armoriq.ai is ArmorIQ's coding-assistant product, which is why its Policy Studio refused Counter's tool names. This section moves Counter to the platform. Branch `final` merges `main` (PR #1), `intent` and `mcp-proxy`.
+
+### What was set up (workspace `tayyab.khn's Workspace`, backend `https://api.armoriq.ai`)
+
+- MCP server `counter`, remote, `https://counter-1027824348124.us-central1.run.app/mcp`, Bearer. The platform reached it with the bearer and listed 11 tools; TLS verified; registry shows `11/11`, vulns `CLEAN`, status "Unknown" (the scan never sends the stored bearer, see below).
+- Agent `counter-front-desk` (`c0035120-…`), Connect by URL with the app URL. "Attached to MCP server" failed with `url must be a URL address. url should not be empty`.
+- API key `counter-backend`, full access, created in the platform UI. `~/.config/counter/.env` now has the platform values as `ARMORIQ_*` and `BACKEND_ENDPOINT`; the tools.armoriq.ai ones moved to `TOOLS_*`. Secret Manager `counter-armoriq-api-key` / `counter-armoriq-login` have new versions with the platform values.
+- Policy `counter-policy` (`8d58c24e-…`), `deploy/armoriq/counter-policy.v1.json`, imported with `POST /policies/yaml/import-apikey`, activated from the signed-in console (`201 Policy activated successfully`). The platform rejects v2: `400 Policy requires apiVersion: armor.io/v1`.
+- Backend: public `/mcp` (`MCP_PUBLIC=1`, bearer = HMAC of `MCP_TOKEN`, only `lookup_price` and `get_order` run there), `deploy.sh` points at `api.armoriq.ai` with the agent id. One case per counter call; `/api/case/close` is owner-only. Web: the plan line on the case card, mock replay one customer per call.
+- Deployed revision `counter-00010-6jm`.
+
+### Policy matrix on the platform (real output, SDK direct, before the switch)
+
+```
+counter lookup_price                  -> allow allow_with_logging   467ms
+counter issue_refund               45 -> allow allow_with_logging   457ms
+counter issue_refund              520 -> block amount_exceeds_max   490ms
+counter match_competitor_quote    420 -> block tool_not_in_allowlist   441ms
+counter match_competitor_quote    170 -> block tool_not_in_allowlist   432ms
+counter refund_to_account          45 -> block tool_not_in_allowlist   566ms
+counter waive_lock_check              -> block tool_not_in_allowlist   419ms
+counter process_exchange          170 -> hold  amount_requires_approval  deleg=16a85598 782ms
+approve -> 201
+counter process_exchange          170 -> allow approved_delegation   485ms
+counter issue_refund              170 -> hold  amount_requires_approval  deleg=f754b2cf 3116ms
+reject -> 201
+counter issue_refund               45 -> allow allow_with_logging   372ms
+counter issue_payout               90 -> block tool-not-in-plan: 'counter__issue_payout' was not declared in the captured plan   0ms
+owner   match_competitor_quote    420 -> allow enforcement_passed   531ms
+owner   issue_payout              520 -> allow enforcement_passed   480ms
+```
+
+The last-but-two line used a plan of `get_order`, `record_inspection`, `issue_refund` only. Nothing left pending.
+
+### Beats on the live service (real output, `COUNTER_BACKEND=<live url> uv run python scripts/beats.py`)
+
+```
+=== summary ===
+B1       PASS  ARMORIQ policy block (in the trade-in plan) | got: ARMORIQ/block the counter may never use this (tool_not_in_allowlist) (blocked_by_policy)
+B2       PASS  ARMORIQ allow + refunded | got: ARMORIQ/allow refunded -> Visa ending 6604
+B3       PASS  inspection recorded, then SHOP_RULE refused (serial mismatch) | got: inspection=recorded, refund SHOP_RULE/refused serial on camera doesn't match the order
+B4       PASS  refund_to_account ARMORIQ block + second refund SHOP_RULE refused | got: refund_to_account ARMORIQ/block the counter may never use this (tool_not_in_allowlist); refund #2 SHOP_RULE/refused this order was already refunded
+B5       PASS  HOLD then approve -> executed once (charged 170) | got: hold hold deleg d488ba7a, approve -> executed
+B6       PASS  counter block, owner allow (owner keeps the plan with every tool) | got: counter block the counter may never use this (tool_not_in_allowlist); owner allow owner: every tool allowed (enforcement_passed) -> matched
+B7       PASS  intake drift block; return-case payout ARMORIQ block tool-not-in-plan; second case refused | got: intake refund block tool-not-in-plan; payout ARMORIQ/block not in the plan for this case: intent drift (tool-not-in-plan); open trade_in SHOP_RULE/refused a case is already open: return for order 1101
+ALL BEATS PASS
+```
+
+`cleanup: reject delegations left pending  (none left pending)`.
+
+### Browser check on the live service (real output, `check_web.py --base <live url> --live`)
+
+```
+   beat 1: ARMORIQ BLOCK on screen (match_competitor_quote -> block)
+   beat 2: ARMORIQ ALLOW on screen (issue_refund -> allow)
+   beat 2: screen shows 'Refunded'
+   beat 3: ARMORIQ BLOCK on screen (issue_payout -> block)
+   beat 3: screen shows 'intent drift'
+   beat 3: ARMORIQ BLOCK on screen (refund_to_account -> block)
+   beat 3: screen shows 'already refunded'
+   beat 4: SHOP RULE on screen (issue_refund -> refused)
+   beat 4: screen shows '…7QK2'
+   beat 4 case card: serial on order …4MD9 vs serial on camera …7QK2 ✗
+   beat 5: ARMORIQ HOLD on screen (process_exchange -> hold)
+   beat 5: screen shows 'Waiting for owner'
+   beat 6: ARMORIQ BLOCK on screen (match_competitor_quote -> block)
+   rails: 13 decisions on screen
+   wrong password: error on screen ('Wrong password.')
+   wrong password: no session started
+   owner badge on screen: owner · Sam
+   beat 6 tool allowed in the owner session (match_competitor_quote 420 -> ARMORIQ allow -> matched)
+   shot live-1-connected.png
+   shot live-2-turn.png
+   audio arrived: yes 21 chunks, 5111 ms
+   tool call reached /api/tool: yes 2 sent by the page, decisions came back (no /api/_dev_state)
+   caption on screen: YouHi, I want to return a charger, order 1101 CounterI can help with that! I've opened a case for your return. Can you hold up the charger so I can take a look?
+result: OK
+```
+
+### Tests
+
+`cd backend && uv run pytest`: 109 passed. `cd mcp_server && uv run pytest`: 9 passed.
+
+### What the platform console shows (read from platform.armoriq.ai, shots `web/shots/platform-*.png`)
+
+- Intent → a plan per case. The return plan's graph lists `get_order`, `record_inspection`, `issue_refund`, `notify_customer_on_file`, `page_owner`, `refund_to_account`. Proof → Verify: "Verified · every executed action matches the signed commitment".
+- Activity: `created: plan (plan.created)`, `allowed: plan (tool.enforce)`, `held: plan (tool.enforce)` (WARNING), `blocked: plan (tool.enforce)` (CRITICAL), `created: delegation`, `approved: delegation` by the owner.
+- Observability: one session per call (`counter-front-desk`, product `counter`), with Gemini Live token counts on the live session.
+- Policies: `counter-policy`, Active, priority 100, `Decisions · 7d` counts.
+
+Console gaps (theirs):
+- The policy page flattens member rules: it lists all 11 tools as "Allow".
+- Held Actions shows plans as "Held" (20 "Needs you" after these runs) though every delegation was approved or rejected through the API. The plan detail says "Held · No policy fired" on plans that never held.
+- The MCP security scan calls `/mcp` and `/mcp/` without the stored bearer and gets 401 (Cloud Run log), so the server stays "Unknown". Discovery sends it.
+- In `sdk` mode the drift block (`tool-not-in-plan`) is decided in the SDK, so it doesn't show as a `tool.enforce` event in Activity. Not checked whether it appears in Observability traces.
+
+### Left over
+
+- Video not filmed; `SUBMISSION.md` has the placeholder.
+- `CONTRACTS.md` doesn't list `open_case`, the `plan` SSE event or `POST /api/case/close`; they are described in "## intent" above.
+- The old tools.armoriq.ai workspace still has an unrejected probe hold (`0ab79f94…`). The platform has none pending.

@@ -4,7 +4,7 @@ The front desk of a phone and electronics repair shop, run by an AI agent on a v
 
 Evidence for every claim below is in `research/r5/` (tests run 2026-10-16/17).
 
-**Update 2026-10-17:** ArmorIQ now runs in the ArmorTools Pro workspace with an `armor.io/v2` policy (`deploy/armoriq/counter-policy.v2.json`) and console telemetry on. The tiers and identities below are unchanged; the variant B notes describe the old probe-org setup. See `PROGRESS.md` → "armortools".
+**Update 2026-10-17 (later):** ArmorIQ now runs on platform.armoriq.ai with an `armor.io/v1` policy, and each customer case is its own ArmorIQ plan (see `PROGRESS.md` → "platform" and "intent"). Earlier the same day it ran in the ArmorTools Pro workspace with an `armor.io/v2` policy (`deploy/armoriq/counter-policy.v2.json`) and console telemetry on. The tiers and identities below are unchanged; the variant B notes describe the old probe-org setup. See `PROGRESS.md` → "armortools".
 
 ## What the judges see
 - A video-call screen. The agent is a blue orb (picture-in-picture, or the big tile when the camera is off). The customer's camera takes the big tile when the agent says "show me".
