@@ -1,6 +1,6 @@
 # Counter
 
-Counter is the front desk of a phone and electronics repair shop, run by an AI agent on a video call. The customer talks, shows things to the camera, and the agent looks up orders, reads serials and moves money. Every action passes through ArmorIQ first: ArmorIQ decides what the counter account may do and for how much. Money actions over a threshold become a hold. The shop owner approves or rejects those from Slack. The customer never gets to choose who the agent acts as.
+Counter is the front desk of a phone and electronics repair shop, run by an AI agent on a video call. The customer talks, shows things to the camera, and the agent looks up orders, reads serials and moves money. Every action passes through ArmorIQ first: ArmorIQ decides what the counter account may do and for how much. Money actions over a threshold become a hold. The shop owner approves or rejects those from Slack. Every check also shows up in the ArmorIQ console at tools.armoriq.ai. The customer never gets to choose who the agent acts as.
 
 Live demo (Cloud Run, no login): https://counter-1027824348124.us-central1.run.app
 Open it in Chrome with a camera and mic. `/?role=owner` asks for the owner password (kept out of the repo). `/owner.html` is the owner console.
@@ -44,32 +44,33 @@ The browser holds the Gemini Live session (audio, 1 fps camera frames, a full-si
 
 ## ArmorIQ in this app
 
-- `armoriq-sdk==0.6.10`, `SessionOptions(mode="sdk")`, org probe-org, policy `counter-policy` in its variant B form. Every call is a `session.check("counter__"+tool, args, user_email=<identity>)`.
-- One plan per session, declaring all 11 tools (`counter__<tool>`). A new plan also clears ArmorIQ's sticky rejections, so one plan covers one customer conversation.
-- Identities: a counter session runs as a fresh non-member `counter-<8 hex>@example.com` picked by the server. The owner console runs as the admin login. Nothing the customer says changes the identity.
-- Thresholds (variant B): `issue_payout`, `issue_refund` and `process_exchange` allow up to $100, hold from $100.01 to $350, block above $350. `match_competitor_quote`, `waive_lock_check` and `refund_to_account` are not in the counter's allowed list, so they block at any amount. The owner identity gets plain allow.
-- HOLD: the backend stores the exact tool, args, evidence still and delegation id, and posts the card in Slack. Approve calls `POST /delegation/approve` as the owner, re-checks the **stored** action, and executes it once on the MCP server. Reject is final for the plan.
-- Latency medians from the test run: allow 816 ms, hold 1817 ms, block 830 ms.
+- **Workspace.** Counter runs in our ArmorTools Pro workspace (tools.armoriq.ai, backend `https://staging-api.armoriq.io`): API key `counter-backend`, agent `counter-front-desk`, policy `counter-policy`.
+- **Checks.** `armoriq-sdk==0.6.10`, `SessionOptions(mode="sdk")`. Every call is `session.check("counter__"+tool, args, user_email=<identity>)` before anything runs. One plan per customer conversation, declaring all 11 tools.
+- **Identities.** A counter session runs as a fresh non-member `counter-<8 hex>@example.com` picked by the server. The owner runs as the workspace admin after a password login. Nothing the customer says changes the identity.
+- **Policy** (`deploy/armoriq/counter-policy.v2.json`, `armor.io/v2`): default block. Read and notify tools allowed. `issue_payout`, `issue_refund`, `process_exchange`: block when `args.amount > 350`, hold when `args.amount > 100`, else allow. `match_competitor_quote`, `waive_lock_check`, `refund_to_account`: block. Owner: every tool allowed. Holds need one `org_admin`.
+- **Holds.** The backend stores the exact tool, args, evidence still and delegation id, and posts the card in Slack. Approve calls `POST /delegation/approve` as the owner, re-checks the **stored** action (`allow / approved_delegation`), and runs it once on the MCP server. Reject is final for the plan.
+- **Console.** Telemetry is on. Each conversation is one session in tools.armoriq.ai → Sessions, one turn per tool call, with the verdict (Allowed, Held, "Blocked by a policy") and the rule id. Gemini Live's token counts are recorded per turn, so the console shows tokens and estimated spend. The rail shows the same rule id in brackets: `over $100 needs the owner (hold:process_exchange#1)`.
+- **Latency** in the workspace: about 110–300 ms per check.
 
-We chose variant B over `toolEnforcement: block` on purpose. See finding 1 below.
+Policy Studio publishes rules for the ArmorClaude plugin and only accepts coding-assistant tool names, so Counter's rules are a server-side policy in the same workspace. See finding 6.
 
 ## What we found
 
-Four things we hit while building against ArmorIQ. Full write-up in `reference/armoriq/FINDINGS.md`; raw run outputs in `reference/armoriq/out_*.txt`.
+Full write-up with raw output: `PROGRESS.md` → "armortools" (v2 workspace) and `reference/armoriq/FINDINGS.md` (v1, probe-org). Re-run the v2 checks with `cd backend && uv run python scripts/armoriq_matrix.py`.
 
-1. **The amount check runs before `toolEnforcement`.** `match_competitor_quote` was a `toolEnforcement: block` tool, yet the same tool called with an amount of 170 came back `hold / amount_requires_approval`, and approving it re-checked to `allow / approved_delegation`.
+1. **A string amount skips the hold.** On v2, `issue_payout` with `amount: "170"` is allowed and `170` is held. `-50` and `0` are allowed too.
    ```
-   [G1] nonmember-E match_competitor_quote 170 -> hold / amount_requires_approval deleg=c4638eda
-   [G1] nonmember-E match_competitor_quote 170 -> allow / approved_delegation deleg=- 898ms
+   amount 100.5   issue_payout  100.5 -> hold  hold:issue_payout#1
+   amount '170'   issue_payout  '170' -> allow allow:issue_payout#2
    ```
-   (`reference/armoriq/out_tests3.txt`.) So a caller who adds `amount` to a blocked tool gets an approvable hold, and approving it unlocks the tool. In variant B the tool is left out of the allowed list instead, and then it answers `block / tool_not_in_allowlist` at any amount (`out_verify_b.txt`).
-2. **`approverRole` is a client-supplied field.** The approve helper sends the role in the request body:
-   ```
-   POST /delegation/approve  {"delegationId", "approverEmail", "approverRole": "org_admin"}
-   ```
-   (`reference/armoriq/tests_lib.py:56`) and the API answered `201 Delegation approved`. The role the caller claims rides along in the request.
-3. **Holds dedup by tool, not by args.** Delegation dedup is per requester and tool and ignores the amount: calling `process_exchange 200` while a `process_exchange 170` hold was pending returned the same delegation id (FINDINGS.md, T1). So approving that id may approve an amount the owner never saw; we did not test which amount runs. Our backend stores the exact action next to the pending row and re-checks that stored action on approve, so an approval can only run what the owner saw.
-4. **A rejection sticks to the plan.** After a rejection, the same tool in the same plan answers `block / delegation_rejected` at any amount above the threshold, and it stayed that way for at least 90 s. A new plan clears it (FINDINGS.md, F1). Counter starts a new plan for every call session, so a decline only affects the rest of that conversation.
+   Counter refuses amounts ≤ 0 in its shop rules and sends amounts to ArmorIQ as numbers.
+2. **Approval by member email breaks approving.** With `approvalDefaults.members: [<admin email>]` every `/delegation/approve` returned `500 Internal server error`. With `roles: ["org_admin"]` the same call returns `201` and the re-check allows.
+3. **The condition field must be `args.amount`.** `amount`, `arguments.amount` and `input.amount` compile without a warning and never match, so a hold written that way allows everything.
+4. **Holds dedup by tool, not by amount.** A $300 call while a $170 hold is pending gets the $170 hold's delegation id. Counter stores the exact action and re-checks that stored action on approve, so an approval can only run what the owner saw.
+5. **A rejection sticks to the plan.** After a reject, the same tool answers `block / delegation_rejected` above the threshold until a new plan. Counter starts one plan per conversation.
+6. **Console gaps.** Policy Studio refuses `lookup_price`, `counter__lookup_price` and `mcp__counter__lookup_price` (`Unknown tool in statements[0]`). The Policies screen says "In progress". Inbox keeps a plan as Held after its delegation is approved or rejected through the API.
+
+On the older v1 engine (probe-org) the amount check ran before `toolEnforcement`, so a blocked tool with `amount: 170` became an approvable hold (`reference/armoriq/out_tests3.txt`). On v2 the three blocked tools stay blocked at $170.
 
 ## Run it
 
@@ -83,7 +84,7 @@ bash backend/scripts/dev.sh        # MCP server on 127.0.0.1:8001, backend on 12
 Tests:
 ```bash
 cd mcp_server && uv run pytest     # 9 passed
-cd backend && uv run pytest        # 71 passed
+cd backend && uv run pytest        # 78 passed
 ```
 
 The six beats against any backend (local or the deployed one):
@@ -123,4 +124,7 @@ bash deploy/deploy.sh              # builds from source and deploys to Cloud Run
 | Beat 5, approved and executed | `web/shots/mock-5b-approved.png` |
 | Owner console with a pending card | `web/shots/owner-1-pending.png` |
 | Real Gemini Live session connected | `web/shots/live-1-connected.png` |
+| ArmorIQ console, Home (Checked by Armor, held actions) | `web/shots/console-1-home.png` |
+| ArmorIQ console, Sessions | `web/shots/console-2-sessions.png` |
+| ArmorIQ console, one session: Blocked / Held / allowed per call | `web/shots/console-3-session-detail.png` |
 | Owner login on the call screen | `web/shots/owner-login-2-allowed.png` |
