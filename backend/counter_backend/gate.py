@@ -9,15 +9,22 @@ import base64
 import logging
 import time
 
-from . import rules
-from .armor import describe
+from . import cases, rules
+from .armor import describe, is_drift
 from .store import CounterSession, Store, new_id, now_iso, pending_view
-from .tools import TOOL_NAMES_SET
+from .tools import OPEN_CASE, TOOL_NAMES_SET
 
 log = logging.getLogger("counter.gate")
 
 HOLD_NOTE = "Tell the customer the owner has to approve this; it is not done yet."
 BLOCK_NOTE = "This account can't do this. Offer what you can do instead."
+
+
+def drift_note(session: CounterSession, name: str) -> str:
+    if cases.in_case(session):
+        return (f"{name} is outside the open case ({cases.describe_case(session.plan)}). "
+                f"ArmorIQ only allows the actions planned for this case, so it did not run.")
+    return (f"No case is open, and {name} is not an intake action, so ArmorIQ did not run it.")
 
 SERIAL_TOOLS = rules.SERIAL_TOOLS
 MONEY_TOOLS = rules.MONEY_TOOLS
@@ -161,7 +168,7 @@ class Gate:
             case["inspection"] = {"serial_seen": seen, "condition": (args or {}).get("condition"),
                                   "serial_match": match}
             changed = True
-        if name in KIND and case.get("kind") != KIND[name]:
+        if name in KIND and not cases.in_case(session) and case.get("kind") != KIND[name]:
             case["kind"] = KIND[name]
             changed = True
         if name in OUTCOME_TOOLS:
@@ -170,6 +177,97 @@ class Gate:
                 case["outcome"] = outcome
                 changed = True
         return changed
+
+    # ---------------------------------------------------------------- case plans
+    def _publish_plan(self, session: CounterSession) -> None:
+        self.store.publish(session.session_id, "plan", cases.plan_event(session))
+
+    def _close_case(self, session: CounterSession | None, tool: str) -> None:
+        """The case's money tool ran, or its hold was resolved: a new case may open.
+        The closed case's plan stays in force until the next open_case, so a
+        follow-up like notify_customer_on_file still runs."""
+        if session is None or tool not in cases.CLOSING_TOOLS or not cases.case_open(session):
+            return
+        session.plan["status"] = "closed"
+        session.plan["closed_ts"] = now_iso()
+        self._publish_plan(session)
+
+    def _waiting_hold(self, session: CounterSession) -> dict | None:
+        for p in self.store.pending.values():
+            if p["session_id"] == session.session_id and p["status"] == "waiting":
+                return p
+        return None
+
+    async def start_intake(self, session: CounterSession) -> None:
+        """Record the plan the ArmorIQ session was started with."""
+        session.plan = cases.new_plan(cases.INTAKE, None, cases.intake_tools(session.role),
+                                      getattr(session.armor_session, "plan_id", None))
+        self._publish_plan(session)
+
+    async def _open_case(self, session: CounterSession, args: dict, t0: float) -> dict:
+        case_type = cases.normalize_type(args.get("case_type"))
+        order = rules.oid(args.get("order_id"))
+        if case_type not in cases.CASE_TYPES:
+            return await self._refuse(session, OPEN_CASE, args, "case_type must be return, exchange or trade_in", t0)
+        if case_type not in cases.NEEDS_ORDER:
+            order = ""
+        elif not order:
+            return await self._refuse(session, OPEN_CASE, args,
+                                      f"a {cases.LABEL[case_type]} needs the order number", t0)
+        if self._waiting_hold(session):
+            # the approve re-check runs on the current plan, so it must not change under a hold
+            return await self._refuse(session, OPEN_CASE, args, "waiting for the owner on an earlier request", t0)
+        if cases.case_open(session):
+            cur = session.plan
+            if cur["case_type"] == case_type and (cur.get("order_id") or "") == order:
+                return {"response": self._case_response(session, "this case is already open"),
+                        "decision": None, "plan": cases.plan_event(session)}
+            return await self._refuse(session, OPEN_CASE, args,
+                                      f"a case is already open: {cases.describe_case(cur)}", t0)
+
+        tools = cases.case_tools(session.role, case_type)
+        goal = cases.goal(case_type, order or None)
+        plan_id = getattr(session.armor_session, "plan_id", None)
+        if session.role != "owner":  # the owner keeps the plan with every tool
+            try:
+                plan_id = await session.armor_session.start_plan(tools, goal, order or None)
+            except Exception as e:
+                log.warning("ArmorIQ start_plan for %s failed: %s", goal, type(e).__name__)
+                response = {"status": "error", "reason": "could not start the plan for this case; try again"}
+                decision = self._decision(session, OPEN_CASE, args, "ARMORIQ", "block",
+                                          "could not start the plan for this case", self._ms(t0),
+                                          armoriq_reason=f"{type(e).__name__}: {e}")
+                await self._finish(session, response, decision, OPEN_CASE, args, None)
+                return {"response": response, "decision": decision}
+        session.plan = cases.new_plan(case_type, order or None, tools, plan_id)
+        keep = session.case.get("order") if order and (session.case.get("order") or {}).get("order_id") == order else None
+        session.case = {"kind": case_type, "order": keep, "inspection": None, "outcome": None}
+        self._publish_plan(session)
+        self.store.publish(session.session_id, "case", {"session_id": session.session_id, "case": session.case})
+        return {"response": self._case_response(session), "decision": None, "plan": cases.plan_event(session)}
+
+    @staticmethod
+    def _case_response(session: CounterSession, note: str | None = None) -> dict:
+        p = session.plan
+        return {"status": "case_open", "case_type": p["case_type"], "order_id": p.get("order_id"),
+                "plan": list(p["tools"]),
+                "note": note or "Case opened. Only the actions in this plan can run until it closes."}
+
+    async def close_case(self, session: CounterSession) -> dict | None:
+        """Operator "next customer": back to the intake plan. Not a model tool.
+        Returns None if a hold is waiting (the plan must not change under it)."""
+        if self._waiting_hold(session):
+            return None
+        tools = cases.intake_tools(session.role)
+        goal = cases.goal(cases.INTAKE, None)
+        plan_id = getattr(session.armor_session, "plan_id", None)
+        if session.role != "owner" and cases.in_case(session):
+            plan_id = await session.armor_session.start_plan(tools, goal, None)
+        session.plan = cases.new_plan(cases.INTAKE, None, tools, plan_id)
+        session.case = {"kind": None, "order": None, "inspection": None, "outcome": None}
+        self._publish_plan(session)
+        self.store.publish(session.session_id, "case", {"session_id": session.session_id, "case": session.case})
+        return cases.plan_event(session)
 
     # ---------------------------------------------------------------- slack
     def _slack_task(self, method: str, *args) -> None:
@@ -209,6 +307,10 @@ class Gate:
         args = dict(args or {})
         still = decode_still(still_b64)
 
+        # 0. open_case: handled here, never sent to MCP or to ArmorIQ's check
+        if name == OPEN_CASE:
+            return await self._open_case(session, args, t0)
+
         # 1. unknown tool
         if name not in TOOL_NAMES_SET:
             return await self._refuse(session, name, args, "unknown tool", t0, unknown_tool=True)
@@ -218,7 +320,8 @@ class Gate:
             await self._ensure_serial_last4(session, args)
 
         # 2. shop rules
-        reason = rules.shop_rule_refusal(self.store, session, name, args, camera_on)
+        reason = (rules.shop_rule_refusal(self.store, session, name, args, camera_on)
+                  or cases.order_refusal(session, name, rules.oid(args.get("order_id"))))
         if reason:
             return await self._refuse(session, name, args, reason, t0)
 
@@ -259,6 +362,9 @@ class Gate:
         if chk.action != "allow" or not chk.allowed:
             response = {"status": "blocked_by_policy", "decided_by": "ArmorIQ",
                         "reason": describe(chk.reason) or "blocked", "note": BLOCK_NOTE}
+            if is_drift(chk.reason):
+                response["note"] = drift_note(session, name)
+                response["open_case"] = cases.describe_case(session.plan)
             decision = self._decision(session, name, args, "ARMORIQ", "block", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason)
             await self._finish(session, response, decision, name, args, None)
@@ -284,6 +390,8 @@ class Gate:
         decision = self._decision(session, name, args, "ARMORIQ", "allow", describe(chk.reason) or "allowed",
                                   self._ms(t0), armoriq_reason=chk.reason, result=response)
         await self._finish(session, response, decision, name, args, full)
+        if isinstance(full, dict) and "error" not in full:
+            self._close_case(session, name)
         return {"response": response, "decision": decision}
 
     # ---------------------------------------------------------------- approvals
@@ -331,6 +439,7 @@ class Gate:
         self.store.publish(session.session_id, "pending_resolved",
                            {"pending_id": pending_id, "session_id": session.session_id,
                             "status": "executed", "tool": p["tool"], "result": result})
+        self._close_case(session, p["tool"])
         self._slack_task("update_hold", pending_view(p))
         return p
 
@@ -347,6 +456,7 @@ class Gate:
                                        "detail": reason}
             self.store.publish(session.session_id, "case",
                                {"session_id": session.session_id, "case": session.case})
+        self._close_case(session, p["tool"])
         self._slack_task("update_hold", pending_view(p))
         return p
 
@@ -373,6 +483,7 @@ class Gate:
         self.store.publish(p["session_id"], "pending_resolved",
                            {"pending_id": pending_id, "session_id": p["session_id"],
                             "status": "rejected", "tool": p["tool"]})
+        self._close_case(session, p["tool"])
         self._slack_task("update_hold", pending_view(p))
         return p
 

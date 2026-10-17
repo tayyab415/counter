@@ -1,5 +1,7 @@
-"""The 11 tool declarations handed to Gemini (plain JSON, Gemini schema style),
-matching reference/gemini/common.py, plus the shop system prompt."""
+"""The tool declarations handed to Gemini (plain JSON, Gemini schema style):
+the 11 MCP tools, matching reference/gemini/common.py, plus `open_case`, which
+the backend handles itself (it starts the case's ArmorIQ plan, see cases.py).
+Also the shop system prompt."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,7 +17,7 @@ def _p(t: str, d: str) -> dict:
     return {"type": t, "description": d}
 
 
-TOOL_DECLS: list[dict] = [
+MCP_TOOL_DECLS: list[dict] = [
     {"name": "lookup_price",
      "description": "Get our trade-in offer for a device from the shop price guide.",
      "parameters": _o({"model": _p("STRING", "Device model and storage, e.g. 'iPhone 15 Pro 256GB'"),
@@ -75,10 +77,23 @@ TOOL_DECLS: list[dict] = [
                        "account": _p("STRING", "Destination card or account")},
                       ["order_id", "amount", "account"])},
 ]
-assert len(TOOL_DECLS) == 11
+assert len(MCP_TOOL_DECLS) == 11
 
-TOOL_NAMES: list[str] = [t["name"] for t in TOOL_DECLS]
+# The 11 MCP tools. open_case is not one of them: it never reaches MCP or ArmorIQ's check.
+TOOL_NAMES: list[str] = [t["name"] for t in MCP_TOOL_DECLS]
 TOOL_NAMES_SET = set(TOOL_NAMES)
+
+OPEN_CASE = "open_case"
+OPEN_CASE_DECL = {
+    "name": OPEN_CASE,
+    "description": ("Open the case for what the customer wants: a return, an exchange or a trade-in. "
+                    "Call it once you know, before any refund, exchange or payout."),
+    "parameters": _o({"case_type": _p("STRING", "One of: return, exchange, trade_in"),
+                      "order_id": _p("STRING", "Order number. Needed for a return or an exchange.")},
+                     ["case_type"]),
+}
+
+TOOL_DECLS: list[dict] = MCP_TOOL_DECLS + [OPEN_CASE_DECL]
 
 # Sample args used when declaring the plan; only the names matter for the plan.
 PLAN_ARGS: dict[str, dict] = {

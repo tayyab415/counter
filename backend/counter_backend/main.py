@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import gemini
+from . import cases, gemini
 from .armor import ArmorIQLayer
 from .config import Settings
 from .gate import Gate
@@ -42,6 +42,10 @@ class ToolBody(BaseModel):
     call_id: str | None = None
     still: str | None = None
     customer_said: str | None = None
+
+
+class CaseCloseBody(BaseModel):
+    session_id: str
 
 
 class UsageBody(BaseModel):
@@ -133,7 +137,9 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
         else:
             raise HTTPException(status_code=400, detail="role must be 'counter' or 'owner'")
         try:
-            armor_session = await armor.start_session(identity)
+            # counter: the intake plan until the model opens a case; owner: every tool
+            armor_session = await armor.start_session(identity, cases.intake_tools(role),
+                                                      cases.goal(cases.INTAKE, None))
         except Exception as e:
             log.warning("ArmorIQ session start failed: %s", type(e).__name__)
             raise HTTPException(status_code=502,
@@ -142,6 +148,7 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
                                  identity_label=label, owner_token=owner_token,
                                  armor_session=armor_session)
         store.sessions[session.session_id] = session
+        await gate.start_intake(session)
         if owner_token:
             store.owner_tokens.add(owner_token)
         gem = minter()
@@ -150,7 +157,8 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
         if not isinstance(gem, dict):
             gem = {"token": gem, "model": settings.gemini_model}
         payload = {"session_id": session.session_id, "role": role, "identity_label": label,
-                   "gemini": gem, "system_prompt": system_prompt(), "tools": TOOL_DECLS}
+                   "gemini": gem, "system_prompt": system_prompt(), "tools": TOOL_DECLS,
+                   "plan": cases.plan_event(session)}
         if owner_token:
             payload["owner_token"] = owner_token
         return payload
@@ -163,6 +171,23 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
             raise HTTPException(status_code=404, detail="unknown session")
         return await gate.handle_tool(session, body.name, body.args, body.camera_on,
                                       body.still, body.call_id, body.customer_said)
+
+    # ------------------------------------------------------------ next customer
+    @app.post("/api/case/close")
+    async def api_case_close(body: CaseCloseBody):
+        """The operator ends the case ("next customer") and the plan goes back to
+        intake. The model can't reach this: the browser only forwards tool calls
+        to /api/tool."""
+        session = store.sessions.get(body.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        try:
+            plan = await gate.close_case(session)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"could not start the intake plan: {type(e).__name__}")
+        if plan is None:
+            raise HTTPException(status_code=409, detail="waiting for the owner on an earlier request")
+        return plan
 
     # ------------------------------------------------------------ model usage
     @app.post("/api/usage")
