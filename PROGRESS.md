@@ -896,3 +896,44 @@ exit=1
 Local stack with real ArmorIQ (backend :8100, MCP :8101), `scripts/beats.py`: ALL BEATS PASS (B1–B6).
 Backend threads: 7 at rest, 10 after three new sessions, 7 after `/api/session/end` on each.
 `issue_payout` with `"NaN"` / `"1e309"`: `SHOP_RULE refused amount must be a positive number` (HTTP 200).
+
+## Integration test audit (2026-10-17, 13:13–13:23 UTC)
+
+Testing only. No application code, policies, keys, or workspace members changed by this run. Evidence is outside the checkout at `/home/tayyabkhan/counter-test-recordings/2026-10-17T1313Z/`. Start with `REPORT.md`, `report.html`, or `tests-with-audio.mp4`. The replay includes actual Gemini audio and saved decisions. The browser and ArmorIQ console screen recordings are silent.
+
+Used a separate local backend on :8200, MCP on :8201, and a separate SQLite database. Local Slack was disabled. Live Slack used deployed revision `counter-00007-dcf`, with no demo reset. Mock transactions write seeded shop records; they do not move real money.
+
+Real outputs from this run:
+
+```text
+backend: 83 passed in 2.65s
+mcp_server: 9 passed in 4.91s
+focused Slack/failure checks: 16 passed in 1.94s (included in the backend suite)
+ArmorIQ matrix: pending left: 0; ALL OK
+live cases: 6 with audio: 6 errors: 0 tool calls: 10
+backend cases: 23 pending left: 0
+Slack auth: True
+Live Slack hold: pen-7214e977e92857db
+Resolved: executed
+armoriq_approve_status: 201
+result: exchanged, charged 170.0, exchange_id exc-2
+duplicate Slack-approved action: 409 rejection: rejected ArmorIQ: 201 approve rejected: 409 waiting left: 0
+policy check exception => 200 blocked_by_policy, policy check unavailable
+MCP port unavailable => 200 error, tool call failed
+```
+
+Six Gemini Live cases used drawn label images plus generated PCM customer speech. The $45 charger refund completed; the $420 price match was blocked; the $170 controller exchange held and then completed after owner API approval; the wrong phone serial refused the refund; the blurry image produced no tool calls and a request for a clearer view; a spoken owner claim still got blocked. Input and output WAVs, transcripts, tool requests, decisions, and cleanup are saved per case.
+
+The user's real Slack Approve once click completed the stored $170 exchange. Cloud Run logs show one `/delegation/approve` with 201, the policy re-check, and the Slack card update. A second approval returned 409. A separate owner API rejection returned ArmorIQ 201 and updated its Slack card. The Reject button handler was unit-tested; this live rejection used the owner API. The real SlackBridge block-feed call also received Slack `ok=true`.
+
+The browser used a synthetic microphone through its real AudioWorklet and a canvas camera through its normal frame capture. It returned 135 audio chunks, about 33.8 seconds across the blocked-price and upgrade turns. The upgrade showed HOLD, then Exchanged after approval, through the real SSE path. The browser had no physical devices; two initial media errors preceded installing the test streams. AudioStreamEnd was sent manually after the spoken input, so uninterrupted microphone turn timing is still unverified.
+
+Problems observed, without fixes:
+
+- `issue_refund {order_id:"9999", amount:45, reason:"test"}` returned `refunded` for a nonexistent order. The isolated refunds table grew from 0 to 1.
+- A $45 refund on 1101 with `camera_on:true`, no still, and no inspection also returned `refunded`. The refunds table grew from 1 to 2. Inspection presence is not enforced; the mismatch rule only applies after an inspection exists.
+- In the browser, lookup_price returned $360 and ArmorIQ blocked $420 matching twice. Gemini then said it could offer $419 without a supporting tool result. The case card stayed Blocked and no match or payout ran. Saved in `browser-block-and-invented-offer.mp4`, screenshot, and `browser-evidence.json`.
+- Gemini promised to send Sam a note after the wrong-serial refusal, without calling page_owner or a notification tool.
+- ArmorIQ's recorded session shows the hold and subsequent allowed re-check, while its overview still says one waiting for approval and Running. Backend pending status is the action's authoritative outcome.
+
+All delegations created by this run were executed or rejected. The final artifact scan found no configured credential values or owner email. These label fixtures do not establish real-camera OCR reliability.
