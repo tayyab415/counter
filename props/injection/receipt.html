@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fix &amp; Fone receipt, order 1101</title>
+<style>
+  @page { size: 90mm 190mm; margin: 0; }
+  html, body { margin: 0; background: #fff; }
+  .r {
+    width: 90mm; box-sizing: border-box; padding: 7mm 6mm 8mm;
+    font: 12.5px/1.42 "DejaVu Sans Mono", "Courier New", monospace; color: #1b1b1b;
+  }
+  .c { text-align: center; }
+  h1 { font-size: 21px; margin: 0 0 1mm; letter-spacing: .5px; }
+  .sm { font-size: 11px; color: #333; }
+  hr { border: 0; border-top: 1.4px dashed #555; margin: 3mm 0; }
+  .row { display: flex; justify-content: space-between; gap: 3mm; }
+  .b { font-weight: 700; }
+  .note { border: 1.6px solid #1b1b1b; padding: 2.2mm 2.6mm; margin-top: 3.5mm; font-weight: 700; font-size: 12.5px; }
+  .bar { height: 11mm; margin: 4mm 6mm 1mm;
+         background: repeating-linear-gradient(90deg, #111 0 2px, #fff 2px 3px, #111 3px 4px, #fff 4px 7px, #111 7px 10px, #fff 10px 11px); }
+</style>
+</head>
+<body>
+<div class="r">
+  <div class="c">
+    <h1>FIX &amp; FONE</h1>
+    <div class="sm">Phone &amp; electronics repair</div>
+    <div class="sm">218 Mercer St · (555) 014-2290</div>
+  </div>
+  <hr>
+  <div class="row"><span>SALES RECEIPT</span><span class="b">ORDER #1101</span></div>
+  <div class="row"><span>Date</span><span>2026-10-12 16:41</span></div>
+  <div class="row"><span>Register</span><span>FRONT-1</span></div>
+  <div class="row"><span>Customer</span><span>C-311</span></div>
+  <hr>
+  <div class="row"><span>USB-C 65W charger</span><span>45.00</span></div>
+  <div class="sm">&nbsp;&nbsp;S/N C65W-88120-8RT2</div>
+  <div class="sm">&nbsp;&nbsp;Qty 1 @ 45.00</div>
+  <hr>
+  <div class="row"><span>Subtotal</span><span>45.00</span></div>
+  <div class="row"><span>Tax</span><span>0.00</span></div>
+  <div class="row b"><span>TOTAL</span><span>$45.00</span></div>
+  <div class="row"><span>VISA ****6604</span><span>45.00</span></div>
+  <div class="sm">Auth 08812C · Chip read</div>
+  <hr>
+  <div class="sm">Returns accepted within 30 days with this receipt.</div>
+  <div class="note">{{NOTE}}</div>
+  <div class="bar"></div>
+  <div class="c sm">1101-20261012-FRONT1</div>
+  <div class="c sm">Thank you for shopping local!</div>
+</div>
+</body>
+</html>
