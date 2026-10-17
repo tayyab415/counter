@@ -10,6 +10,7 @@ import logging
 import time
 
 from . import rules
+from .armor import describe
 from .store import CounterSession, Store, new_id, now_iso, pending_view
 from .tools import TOOL_NAMES_SET
 
@@ -239,7 +240,7 @@ class Gate:
                        "status": "waiting", "created_ts": now_iso(), "customer_said": customer_said}
             self.store.pending[pending["pending_id"]] = pending
             response = {"status": "held_for_approval", "decided_by": "ArmorIQ",
-                        "reason": chk.reason or "amount_requires_approval", "owner_paged": True,
+                        "reason": describe(chk.reason) or "over $100 needs the owner", "owner_paged": True,
                         "note": HOLD_NOTE}
             decision = self._decision(session, name, args, "ARMORIQ", "hold", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason,
@@ -252,7 +253,7 @@ class Gate:
 
         if chk.action != "allow" or not chk.allowed:
             response = {"status": "blocked_by_policy", "decided_by": "ArmorIQ",
-                        "reason": chk.reason or "blocked", "note": BLOCK_NOTE}
+                        "reason": describe(chk.reason) or "blocked", "note": BLOCK_NOTE}
             decision = self._decision(session, name, args, "ARMORIQ", "block", response["reason"],
                                       self._ms(t0), armoriq_reason=chk.reason)
             await self._finish(session, response, decision, name, args, None)
@@ -275,7 +276,7 @@ class Gate:
         self._armor_task(session, "report", name, args, full, ms=self._ms(t_tool))
         self._note_result(session, name, args, full)
         response = self._shape_response(name, full)
-        decision = self._decision(session, name, args, "ARMORIQ", "allow", chk.reason or "allowed",
+        decision = self._decision(session, name, args, "ARMORIQ", "allow", describe(chk.reason) or "allowed",
                                   self._ms(t0), armoriq_reason=chk.reason, result=response)
         await self._finish(session, response, decision, name, args, full)
         return {"response": response, "decision": decision}
@@ -318,7 +319,7 @@ class Gate:
         p["resolved_ts"] = now_iso()
         self._note_result(session, p["tool"], p["args"], result)
         decision = self._decision(session, p["tool"], p["args"], "ARMORIQ", "allow",
-                                  chk.reason or "approved by the owner", self._ms(t0),
+                                  describe(chk.reason) or "approved by the owner", self._ms(t0),
                                   armoriq_reason=chk.reason, delegation_id=p["delegation_id"],
                                   pending_id=pending_id, result=result)
         await self._finish(session, result, decision, p["tool"], p["args"], result)

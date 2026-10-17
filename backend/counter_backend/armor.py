@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -16,6 +17,32 @@ from dataclasses import dataclass
 import httpx
 
 log = logging.getLogger("counter.armor")
+
+
+MONEY_RULES = {"issue_payout", "issue_refund", "process_exchange"}
+NEVER_COUNTER = {"match_competitor_quote", "waive_lock_check", "refund_to_account"}
+_RULE = re.compile(r"^(allow|hold|block):([a-z_.]+)#(\d+)$")
+
+
+def describe(reason: str) -> str:
+    """counter-policy rule ids in plain words, the raw id kept in brackets so it
+    matches the ArmorIQ console: "hold:process_exchange#1" ->
+    "over $100 needs the owner (hold:process_exchange#1)"."""
+    words = {"approved_delegation": "approved by the owner",
+             "delegation_rejected": "the owner said no earlier in this conversation"}.get(reason)
+    m = _RULE.match(reason or "")
+    if m:
+        verdict, tool, variant = m.group(1), m.group(2), int(m.group(3))
+        if tool == "tools.default":
+            words = "owner: every tool allowed" if verdict == "allow" else None
+        elif tool in MONEY_RULES:
+            words = {0: "over $350, the counter can't", 1: "over $100 needs the owner",
+                     2: "up to $100, allowed"}.get(variant)
+        elif tool in NEVER_COUNTER:
+            words = "the counter may never use this"
+        else:
+            words = "allowed" if verdict == "allow" else None
+    return f"{words} ({reason})" if words else reason
 
 
 @dataclass

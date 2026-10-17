@@ -49,3 +49,12 @@ async def test_approved_hold_is_reported_as_delegated(world):
     await settle()
     assert p["status"] == "executed"
     assert [(t, ok, d) for t, _, ok, d in world.armor.reports] == [("process_exchange", True, True)]
+
+
+def test_policy_reasons_in_plain_words():
+    from counter_backend.armor import describe
+    assert describe("hold:process_exchange#1") == "over $100 needs the owner (hold:process_exchange#1)"
+    assert describe("block:issue_payout#0") == "over $350, the counter can't (block:issue_payout#0)"
+    assert describe("block:refund_to_account#0").startswith("the counter may never use this")
+    assert describe("allow:tools.default#0").startswith("owner: every tool allowed")
+    assert describe("something new") == "something new"
