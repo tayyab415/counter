@@ -26,7 +26,7 @@ The same tool at the same amount is blocked for the counter and allowed for the 
 
 - **Onboarded on platform.armoriq.ai.**
   - Agent `counter-front-desk`.
-  - MCP server `counter`: the platform discovered all 11 tools and its scan came back clean.
+  - MCP server `counter`: the platform discovered all 11 tools.
   - API key `counter-backend`, made in the platform UI.
   - Policy `counter-policy` (`armor.io/v1`), active.
 - **Intent plans per case.** `start_plan` runs at intake, then again when a case opens, on the same session. A counter call gets one case, so the plan can't be swapped for a looser one mid-call. The console shows each case's signed plan as a graph, and Proof → Verify reads "every executed action matches the signed commitment".

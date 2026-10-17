@@ -899,6 +899,47 @@ Local stack with real ArmorIQ (backend :8100, MCP :8101), `scripts/beats.py`: AL
 Backend threads: 7 at rest, 10 after three new sessions, 7 after `/api/session/end` on each.
 `issue_payout` with `"NaN"` / `"1e309"`: `SHOP_RULE refused amount must be a positive number` (HTTP 200).
 
+## Updated workflow recordings (2026-10-17, 13:43–13:54 UTC)
+
+Testing and recording only. No application code, policies, keys, or members changed by this recording task. Evidence: `/home/tayyabkhan/counter-test-recordings/2026-10-17T1340Z/REPORT.md`. Start with `updated-demo-with-narration.mp4` (84 seconds) or `platform-tour-with-narration.mp4` (28 seconds). Narration is synthetic explanatory speech; original browser recordings and actual Gemini browser audio are separate files.
+
+Live Gemini footage used a frozen `final` commit `74b91cf`. The updated UI replay used backend `dc7088e7` and frozen UI working files, with hashes saved in `latest-metadata.json`. Separate recording stacks on 8300/8301 and 8310/8311 used private databases and the live platform API. Slack was disabled; Approve once was clicked in the Counter owner console. The new UI replay has scripted customer lines and live backend/ArmorIQ decisions, not Gemini-generated speech.
+
+Real output:
+
+```text
+First frozen backend: 109 passed in 4.86s
+Latest frozen backend: 109 passed in 8.94s
+Updated UI: 18 tool calls, 14 decisions, 0 browser errors
+Live receipt: issue_refund 45 -> allow -> refunded, ref-1
+Live receipt: issue_payout 90 -> block -> tool-not-in-plan
+Live Gemini upgrade: process_exchange 170 -> hold
+Owner Approve once -> exchanged, charged 170, exc-1
+Updated UI upgrade: process_exchange 170 -> hold
+Owner Approve once -> exchanged, charged 170, exc-1
+Repeat updated approval: HTTP 409
+Both stacks: waiting pending actions 0
+Recording counter and owner session ends: HTTP 200
+Cloud Run counter-00010-6jm: health HTTP 200
+Deployed app.js: plan badge present; new customer sessions present
+```
+
+Recorded the updated plan badge, receipt payout drift block, refund-destination block, duplicate-refund refusal, serial mismatch, hold/approval, and false owner claim. The platform recording covers its MCP registry, policy, exchange context, and proof pages. Its exchange plan `2f992d66-b887-402f-9a28-baba76e1c155` displayed Verified after Verify, while still displaying Held after the exchange completed. The MCP detail summary displayed zero discovered tools alongside an eleven-tool list; policy summaries displayed every rule as Allow. These UI limitations are retained in the report.
+
+The live receipt also exposed a remaining weakness: Gemini recorded an inspection from the receipt without a charger on camera, refunded $45, and escalated the untrusted loyalty claim to page_owner after the payout was blocked. No fixes made.
+
+The Default browser profile reused the platform login in a new tab. Existing platform API credentials remain in the private env file, mode 600. No website password was copied. The recording's own counter/owner sessions were ended, no waiting actions remained, and only its four backend/MCP processes were stopped.
+
+Narration revision after the user reported that the earlier voice was hard to hear: regenerated all twelve segments with `gemini-3.8-flash-tts`, voice Kore. New files are `updated-demo-gemini-tts.mp4`, `platform-tour-gemini-tts.mp4`, and `gemini-narration.mp3` in the same evidence folder. Speech was not sped up. Source footage hashes match the earlier cuts. The original Gemini Live recordings were not changed.
+
+```text
+Gemini TTS: 12 narration segments generated
+Full demo: 84.0 s, stereo AAC 48000 Hz, -14.04 LUFS, -2.15 dBTP
+Platform tour: 28.0 s, stereo AAC 48000 Hz, -13.75 LUFS, -2.15 dBTP
+Exported audio transcription: normalized word similarity 0.9814
+Browser playback: both videos advanced, unmuted, volume 1, audio decoded, no errors
+```
+
 ## Integration test audit (2026-10-17, 13:13–13:23 UTC)
 
 Testing only. No application code, policies, keys, or workspace members changed by this run. Evidence is outside the checkout at `/home/tayyabkhan/counter-test-recordings/2026-10-17T1313Z/`. Start with `REPORT.md`, `report.html`, or `tests-with-audio.mp4`. The replay includes actual Gemini audio and saved decisions. The browser and ArmorIQ console screen recordings are silent.
