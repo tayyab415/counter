@@ -415,6 +415,14 @@ function sendUsage() {
                       body: JSON.stringify(body)}).catch(() => {});
 }
 
+// The page is closing: end the call, so the backend closes its ArmorIQ session.
+function endSession() {
+  if (!state.sid) return;
+  const body = new Blob([JSON.stringify({session_id: state.sid})], {type: "application/json"});
+  navigator.sendBeacon("api/session/end", body);
+  state.sid = null;
+}
+
 async function handleToolCall(toolCall) {
   const calls = toolCall.functionCalls || [];
   if (state.showMe) armShowMe();
@@ -814,6 +822,7 @@ async function bootLive(role, password) {
 
 async function boot() {
   renderCase();
+  window.addEventListener("pagehide", endSession);
   el.logClear.onclick = () => { state.logs.length = 0; el.logBody.replaceChildren(); };
   el.camBtn.onclick = () => setCamera(!state.cameraOn);
   el.micBtn.onclick = () => setMic(!state.micOn);

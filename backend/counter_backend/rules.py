@@ -1,6 +1,7 @@
 """Shop rules: our own code, in front of ArmorIQ."""
 from __future__ import annotations
 
+import math
 import re
 
 MONEY_TOOLS = {"issue_payout", "issue_refund", "process_exchange", "match_competitor_quote", "refund_to_account"}
@@ -9,12 +10,14 @@ CAMERA_TOOLS = {"record_inspection", "issue_refund", "process_exchange", "issue_
 
 
 def num(x):
+    """A finite float, or None. "NaN", "Infinity" and "1e309" are None too."""
     try:
         if isinstance(x, bool):
             return None
-        return float(x)
+        v = float(x)
     except (TypeError, ValueError):
         return None
+    return v if math.isfinite(v) else None
 
 
 def alnum(s) -> str:
