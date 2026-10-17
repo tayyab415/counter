@@ -189,10 +189,10 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
 
     # ------------------------------------------------------------ next customer
     @app.post("/api/case/close")
-    async def api_case_close(body: CaseCloseBody):
-        """The operator ends the case ("next customer") and the plan goes back to
-        intake. The model can't reach this: the browser only forwards tool calls
-        to /api/tool."""
+    async def api_case_close(body: CaseCloseBody, _owner: str = Depends(require_owner)):
+        """The owner ends the case ("next customer") and the plan goes back to intake.
+        Owner only: the counter browser is untrusted, and reopening intake would let a
+        second case follow the first in the same call."""
         session = store.sessions.get(body.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="unknown session")

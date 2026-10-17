@@ -219,13 +219,20 @@ class Gate:
         if self._waiting_hold(session):
             # the approve re-check runs on the current plan, so it must not change under a hold
             return await self._refuse(session, OPEN_CASE, args, "waiting for the owner on an earlier request", t0)
-        if cases.case_open(session):
+        if cases.in_case(session):
             cur = session.plan
             if cur["case_type"] == case_type and (cur.get("order_id") or "") == order:
                 return {"response": self._case_response(session, "this case is already open"),
                         "decision": None, "plan": cases.plan_event(session)}
-            return await self._refuse(session, OPEN_CASE, args,
-                                      f"a case is already open: {cases.describe_case(cur)}", t0)
+            if cases.case_open(session):
+                return await self._refuse(session, OPEN_CASE, args,
+                                          f"a case is already open: {cases.describe_case(cur)}", t0)
+            # One case per counter call. Otherwise a finished refund could be followed by
+            # a "trade-in" case whose plan allows the payout the customer asked for.
+            if session.role != "owner":
+                return await self._refuse(session, OPEN_CASE, args,
+                                          f"this call already handled a case ({cases.describe_case(cur)}); "
+                                          "a new case needs a new call", t0)
 
         tools = cases.case_tools(session.role, case_type)
         goal = cases.goal(case_type, order or None)

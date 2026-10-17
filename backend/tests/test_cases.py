@@ -145,9 +145,15 @@ async def test_case_closes_when_its_money_tool_runs(world):
     # the closed case's plan stays in force for follow-ups
     r = await call(world, s, "notify_customer_on_file", {"order_id": "1101", "template": "refund_issued"})
     assert r["decision"]["action"] == "allow"
+    # one case per counter call: a finished refund can't be followed by a trade-in
+    # whose plan would allow the payout the customer asked for
     r = await call(world, s, "open_case", {"case_type": "trade_in"})
-    assert r["response"]["status"] == "case_open"
-    assert world.armor.plans[-1][1] == cases.PLANS["trade_in"]
+    assert (r["decision"]["layer"], r["decision"]["action"]) == ("SHOP_RULE", "refused")
+    assert r["response"]["reason"] == "this call already handled a case (return for order 1101); a new case needs a new call"
+    assert len(world.armor.plans) == 1
+    r = await call(world, s, "issue_payout", {"customer_id": "C-311", "amount": 90, "reason": "loyalty"})
+    assert (r["decision"]["layer"], r["decision"]["action"], r["decision"]["reason"]) == ("ARMORIQ", "block", DRIFT)
+    assert not [c for c in world.mcp.calls if c[0] == "issue_payout"]
 
 
 async def test_refused_or_blocked_money_tool_keeps_the_case_open(world):
@@ -171,7 +177,7 @@ async def test_no_new_case_while_a_hold_waits_and_the_hold_closes_it(world):
     p = await world.gate.approve(r_pid(world), "Sam")
     assert p["status"] == "executed" and s.plan["status"] == "closed"
     r = await call(world, s, "open_case", {"case_type": "trade_in"})
-    assert r["response"]["status"] == "case_open"
+    assert r["response"]["reason"].startswith("this call already handled a case (exchange for order 1077)")
 
 
 async def test_rejected_hold_closes_the_case(world):
@@ -223,22 +229,29 @@ async def test_owner_keeps_the_plan_with_every_tool(world):
 
 
 # ---------------------------------------------------------------- next customer
+OWNER = {"x-owner-token": "owner-tok"}
+
+
 async def test_operator_closes_the_case_back_to_intake(world):
+    world.store.owner_tokens.add("owner-tok")
     s, _ = await new_session(world)
     await call(world, s, "open_case", {"case_type": "trade_in"})
     r = await world.client.post("/api/case/close", json={"session_id": s.session_id})
+    assert r.status_code == 401   # the counter browser can't reopen intake
+    r = await world.client.post("/api/case/close", json={"session_id": s.session_id}, headers=OWNER)
     assert r.status_code == 200 and r.json()["case_type"] == "intake"
     assert world.armor.plans[-1] == (s.identity, cases.PLANS["intake"], "counter intake")
     r = await call(world, s, "open_case", {"case_type": "return", "order_id": "1101"})
     assert r["response"]["status"] == "case_open"
-    r = await world.client.post("/api/case/close", json={"session_id": "nope"})
+    r = await world.client.post("/api/case/close", json={"session_id": "nope"}, headers=OWNER)
     assert r.status_code == 404
 
 
 async def test_operator_cannot_close_a_case_under_a_hold(world):
+    world.store.owner_tokens.add("owner-tok")
     world.armor.rules = {"issue_payout": "hold"}
     s, _ = await new_session(world)
     await call(world, s, "open_case", {"case_type": "trade_in"})
     await call(world, s, "issue_payout", {"customer_id": "C-311", "amount": 170, "reason": "r"})
-    r = await world.client.post("/api/case/close", json={"session_id": s.session_id})
+    r = await world.client.post("/api/case/close", json={"session_id": s.session_id}, headers=OWNER)
     assert r.status_code == 409
