@@ -27,6 +27,7 @@ from .tools import TOOL_DECLS, system_prompt
 
 log = logging.getLogger("counter.backend")
 OWNER_LABEL = "owner \u00b7 Sam"
+PUBLIC_MCP_TOOLS = {"lookup_price", "get_order"}  # read-only tools the public /mcp may run
 
 
 class SessionBody(BaseModel):
@@ -241,6 +242,55 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
     @app.get("/api/healthz")
     async def api_healthz():
         return {"ok": True}
+
+    # ------------------------------------------------------------ public MCP endpoint
+    # The MCP server listens on loopback only. ArmorIQ's MCP registry (platform.armoriq.ai)
+    # needs an HTTPS URL to scan it, so /mcp forwards there. Callers present
+    # MCP_PUBLIC_TOKEN; the internal MCP_TOKEN never leaves the backend. Off when unset.
+    if settings.mcp_public_token:
+        import httpx
+
+        fwd_req = ("content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id")
+        fwd_resp = ("content-type", "mcp-session-id", "mcp-protocol-version", "cache-control")
+        mcp_http = httpx.AsyncClient(timeout=httpx.Timeout(30, read=300))
+
+        @app.api_route("/mcp", methods=["GET", "POST", "DELETE"])
+        @app.api_route("/mcp/", methods=["GET", "POST", "DELETE"], include_in_schema=False)
+        async def mcp_proxy(request: Request):
+            auth = request.headers.get("authorization", "")
+            if not secrets.compare_digest(auth.encode(), f"Bearer {settings.mcp_public_token}".encode()):
+                return JSONResponse({"error": "unauthorized"}, status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"})
+            raw = await request.body()
+            # Listing tools is fine; running them is not. Every action still goes
+            # through /api/tool (shop rules, then ArmorIQ). Only read tools run here.
+            try:
+                msgs = json.loads(raw) if raw else []
+            except ValueError:
+                msgs = []
+            for m in msgs if isinstance(msgs, list) else [msgs]:
+                if (isinstance(m, dict) and m.get("method") == "tools/call"
+                        and (m.get("params") or {}).get("name") not in PUBLIC_MCP_TOOLS):
+                    return JSONResponse({"jsonrpc": "2.0", "id": m.get("id"),
+                                         "error": {"code": -32001, "message":
+                                                   "this tool only runs through the Counter gate"}})
+            headers = {k: v for k, v in request.headers.items() if k.lower() in fwd_req}
+            headers["authorization"] = f"Bearer {settings.mcp_token}"
+            upstream = mcp_http.build_request(request.method, settings.mcp_url.rstrip("/") + "/mcp",
+                                              headers=headers, content=raw)
+            r = await mcp_http.send(upstream, stream=True)
+            out = {k: v for k, v in r.headers.items() if k.lower() in fwd_resp}
+            if "text/event-stream" in r.headers.get("content-type", ""):
+                async def body():
+                    try:
+                        async for chunk in r.aiter_raw():
+                            yield chunk
+                    finally:
+                        await r.aclose()
+                return StreamingResponse(body(), status_code=r.status_code, headers=out)
+            data = await r.aread()
+            await r.aclose()
+            return Response(data, status_code=r.status_code, headers=out)
 
     # ------------------------------------------------------------ static web
     web_path = settings.web_path

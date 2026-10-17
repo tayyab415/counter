@@ -25,7 +25,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 SECRETS_FLAG=(
   --set-secrets "ARMORIQ_API_KEY=counter-armoriq-api-key:latest,ARMORIQ_LOGIN=counter-armoriq-login:latest,GEMINI_API_KEY=counter-gemini-api-key:latest,OWNER_PASSWORD=counter-owner-password:latest,MCP_TOKEN=counter-mcp-token:latest,SLACK_BOT_TOKEN=counter-slack-bot-token:latest,SLACK_APP_TOKEN=counter-slack-app-token:latest,SLACK_CHANNEL=counter-slack-channel:latest"
 )
-ENV_FLAG=(--set-env-vars "COUNTER_WEB_DIR=/app/web,COUNTER_DB=/tmp/counter.db,MCP_URL=http://127.0.0.1:8001,MCP_HOST=127.0.0.1,MCP_PORT=8001,BACKEND_ENDPOINT=https://staging-api.armoriq.io,ARMORIQ_AGENT_ID=counter-front-desk")
+ENV_FLAG=(--set-env-vars "COUNTER_WEB_DIR=/app/web,COUNTER_DB=/tmp/counter.db,MCP_URL=http://127.0.0.1:8001,MCP_HOST=127.0.0.1,MCP_PORT=8001,MCP_PUBLIC=1,BACKEND_ENDPOINT=https://staging-api.armoriq.io,ARMORIQ_AGENT_ID=counter-front-desk")
 if [ -n "${COUNTER_ENV_VARS_FILE:-}" ]; then
   # --env-vars-file replaces --set-env-vars, so that file carries all 13 vars.
   echo "secrets: --env-vars-file ${COUNTER_ENV_VARS_FILE} (secret IAM grant failed on this project)"

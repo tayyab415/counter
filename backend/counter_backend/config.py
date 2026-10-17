@@ -2,6 +2,8 @@
 (or COUNTER_ENV_FILE). Values are never logged."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +14,14 @@ load_dotenv(os.path.expanduser(os.environ.get("COUNTER_ENV_FILE", "~/.config/cou
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
+
+
+def public_mcp_token(mcp_token: str) -> str:
+    """The public /mcp bearer, derived from MCP_TOKEN so Cloud Run needs no extra
+    secret. Knowing it doesn't reveal MCP_TOKEN."""
+    if not mcp_token:
+        return ""
+    return hmac.new(mcp_token.encode(), b"counter public mcp", hashlib.sha256).hexdigest()
 
 
 @dataclass
@@ -29,6 +39,9 @@ class Settings:
     gemini_api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
     owner_password: str = field(default_factory=lambda: os.environ.get("OWNER_PASSWORD", ""))
     mcp_token: str = field(default_factory=lambda: os.environ.get("MCP_TOKEN", ""))
+    # bearer for the public /mcp endpoint that ArmorIQ's MCP registry scans; empty = no endpoint
+    mcp_public_token: str = field(default_factory=lambda: public_mcp_token(
+        os.environ.get("MCP_TOKEN", "")) if os.environ.get("MCP_PUBLIC") == "1" else "")
     mcp_url: str = field(default_factory=lambda: os.environ.get("MCP_URL", "http://127.0.0.1:8001"))
     web_dir: Path = field(default_factory=lambda: Path(os.environ.get("COUNTER_WEB_DIR", "../web")))
     gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-live-preview"))
