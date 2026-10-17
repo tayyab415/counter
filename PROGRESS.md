@@ -868,7 +868,9 @@ Console gaps (theirs, not fixable from our side):
 - **Non-finite amounts.** `"NaN"`, `"Infinity"`, `"1e309"` passed the positive-amount rule and then crashed `int()` (HTTP 500). `rules.num()` now returns None for them, so the shop rule refuses them.
 - **Matrix script.** Every line has an expected result and prints ok/FAIL; exit code 1 on any FAIL; cleanup runs in `finally` and keeps going past a failed reject.
 
-`cd backend && uv run pytest`: 83 passed.
+- **Ending a call mid-check.** Closing the page while a check ran dropped the session, so a hold from that check couldn't be approved ("session is gone"). The session now counts tool calls in flight and retires only after they finish and no hold needs it.
+
+`cd backend && uv run pytest`: 85 passed (both new race tests fail without the in-flight count).
 
 Matrix, live workspace (`uv run python scripts/armoriq_matrix.py`, tail):
 ```

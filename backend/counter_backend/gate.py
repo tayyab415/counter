@@ -212,8 +212,8 @@ class Gate:
                 self.end_session(s)
 
     def _retire(self, session: CounterSession | None) -> None:
-        if session is None or not session.ended:
-            return
+        if session is None or not session.ended or session.active:
+            return  # a call still running may yet create a hold that needs this session
         if any(p["session_id"] == session.session_id and p["status"] in ("waiting", "approved")
                for p in self.store.pending.values()):
             return  # the approval needs this session; retire it once the hold resolves
@@ -231,6 +231,15 @@ class Gate:
     async def handle_tool(self, session: CounterSession, name: str, args: dict, camera_on: bool,
                           still_b64: str | None = None, call_id: str | None = None,
                           customer_said: str | None = None) -> dict:
+        session.active += 1
+        try:
+            return await self._handle_tool(session, name, args, camera_on, still_b64, customer_said)
+        finally:
+            session.active -= 1
+            self._retire(session)
+
+    async def _handle_tool(self, session: CounterSession, name: str, args: dict, camera_on: bool,
+                           still_b64: str | None, customer_said: str | None) -> dict:
         t0 = time.perf_counter()
         session.last_seen = time.monotonic()
         args = dict(args or {})

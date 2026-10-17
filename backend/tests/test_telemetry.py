@@ -181,3 +181,58 @@ async def test_concurrent_calls_keep_check_and_report_in_one_turn():
                                       "usage", "flush"])
     i = log.index("check counter__get_order")
     assert log[i + 1:i + 3] == ["report counter__get_order", "flush"]
+
+
+async def test_call_ended_mid_check_keeps_the_session_for_the_hold(world):
+    """The page closes while ArmorIQ is still checking; the check comes back a hold.
+    The session must stay so the owner's approval can run it."""
+    import asyncio
+
+    world.armor.rules = {"issue_payout": "hold"}
+    s = world.add_session()
+    started, release = asyncio.Event(), asyncio.Event()
+    real_check = s.armor_session.check
+
+    async def slow_check(*a, **k):
+        started.set()
+        await release.wait()
+        return await real_check(*a, **k)
+
+    s.armor_session.check = slow_check
+    task = asyncio.create_task(call(world, s, "issue_payout", {"customer_id": "C-311", "amount": 170, "reason": "r"}))
+    await started.wait()
+    r = await world.client.post("/api/session/end", json={"session_id": s.session_id})
+    assert r.status_code == 200
+    assert s.session_id in world.store.sessions  # the check is still running
+    release.set()
+    out = await task
+    assert out["decision"]["action"] == "hold"
+    await settle()
+    assert s.session_id in world.store.sessions and world.armor.closed == 0
+    p = await world.gate.approve(out["decision"]["pending_id"], "Sam")
+    await settle()
+    assert p["status"] == "executed"
+    assert s.session_id not in world.store.sessions and world.armor.closed == 1
+
+
+async def test_call_ended_mid_allowed_call_closes_after_it(world):
+    import asyncio
+
+    s = world.add_session()
+    started, release = asyncio.Event(), asyncio.Event()
+    real = world.mcp.call_tool
+
+    async def slow(name, args):
+        started.set()
+        await release.wait()
+        return await real(name, args)
+
+    world.mcp.call_tool = slow
+    task = asyncio.create_task(call(world, s, "lookup_price", {"model": "iPhone 15 Pro 256GB", "condition": "grade B"}))
+    await started.wait()
+    world.gate.end_session(s)
+    assert s.session_id in world.store.sessions
+    release.set()
+    await task
+    await settle()
+    assert s.session_id not in world.store.sessions and world.armor.closed == 1
