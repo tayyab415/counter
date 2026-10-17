@@ -62,38 +62,48 @@ class ArmorIQSession:
         self.email = email
         self.plan_id = plan_id
         self.trace_id = trace_id  # the session UUID shown in the ArmorIQ console
-        # one SDK call at a time per session, in order: a check, then its report and
-        # flush. Without this a flush can close the next call's trace and the console
-        # shows spans under the wrong turn.
+        # one SDK call sequence at a time per session. A flush ends the console's
+        # current trace, so a flush from another call between this call's check and
+        # its report would split the call across two turns.
         self._lock = asyncio.Lock()
 
+    def turn(self) -> "Turn":
+        """`async with session.turn() as t:` for one tool call: check, run, report."""
+        return Turn(self)
+
     async def check(self, tool: str, args: dict, user_email: str | None = None) -> Check:
+        async with self.turn() as t:
+            return await t.check(tool, args, user_email)
+
+    def _check(self, tool: str, args: dict, user_email: str | None) -> Check:
         name = tool if tool.startswith("counter__") else f"counter__{tool}"
-        async with self._lock:
-            r = await asyncio.to_thread(self._session.check, name, dict(args or {}),
-                                        user_email=user_email or self.email)
+        r = self._session.check(name, dict(args or {}), user_email=user_email or self.email)
         return Check(allowed=bool(r.allowed), action=str(r.action), reason=str(r.reason or ""),
                      delegation_id=getattr(r, "delegation_id", None),
                      matched_policy=getattr(r, "matched_policy", None))
 
-    async def report(self, tool: str, args: dict, result: object, ok: bool = True,
-                     error: str | None = None, ms: float | None = None, delegated: bool = False) -> None:
-        """Record a tool run on the console's call ledger, then ship it. Never raises."""
-        from armoriq_sdk.session import ReportOptions
+    def _ship(self, report: dict | None) -> None:
+        """Record the tool run (if any) on the console's call ledger, then flush."""
+        if report is not None:
+            from armoriq_sdk.session import ReportOptions
 
-        name = tool if tool.startswith("counter__") else f"counter__{tool}"
-        opts = ReportOptions(status="success" if ok else "error", error_message=error, duration_ms=ms,
-                             is_delegated=delegated or None)
+            tool = report["tool"]
+            name = tool if tool.startswith("counter__") else f"counter__{tool}"
+            opts = ReportOptions(status="success" if report["ok"] else "error",
+                                 error_message=report["error"], duration_ms=report["ms"],
+                                 is_delegated=report["delegated"] or None)
+            try:
+                self._session.report(name, dict(report["args"] or {}), report["result"], opts)
+            except Exception as e:
+                log.warning("ArmorIQ report failed for %s: %s", tool, type(e).__name__)
+        self._session.flush_observability()
 
-        def run():
-            self._session.report(name, dict(args or {}), result, opts)
-            self._session.flush_observability()
-
+    async def _locked(self, label: str, fn, *args) -> None:
         try:
             async with self._lock:
-                await asyncio.to_thread(run)
+                await asyncio.to_thread(fn, *args)
         except Exception as e:
-            log.warning("ArmorIQ report failed for %s: %s", tool, type(e).__name__)
+            log.warning("ArmorIQ %s failed: %s", label, type(e).__name__)
 
     async def record_generation(self, model: str, input_tokens: int, output_tokens: int,
                                 cached_tokens: int = 0) -> None:
@@ -105,26 +115,54 @@ class ArmorIQSession:
                                             prompt=None, completion=None, finish_reason="stop")
             self._session.flush_observability()
 
-        try:
-            async with self._lock:
-                await asyncio.to_thread(run)
-        except Exception as e:
-            log.warning("ArmorIQ record_generation failed: %s", type(e).__name__)
+        await self._locked("record_generation", run)
 
     async def flush(self) -> None:
-        """Ship the checks recorded so far (holds and blocks have no tool run)."""
-        try:
-            async with self._lock:
-                await asyncio.to_thread(self._session.flush_observability)
-        except Exception as e:
-            log.warning("ArmorIQ flush failed: %s", type(e).__name__)
+        await self._locked("flush", self._session.flush_observability)
 
     async def close(self) -> None:
+        """End the trace, stop the SDK's shipper thread, final flush. Checks still work after."""
+        await self._locked("close", self._session.close)
+
+
+_SHIPPING: set[asyncio.Task] = set()
+
+
+class Turn:
+    """One tool call on the console: its check, the tool run and the flush, with the
+    session to itself. The report and flush ship after the block exits, off the
+    request path; the session stays locked until they are done."""
+
+    def __init__(self, s: ArmorIQSession):
+        self._s = s
+        self._report: dict | None = None
+
+    async def __aenter__(self) -> "Turn":
+        await self._s._lock.acquire()
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        task = asyncio.create_task(self._finish(self._report))
+        _SHIPPING.add(task)
+        task.add_done_callback(_SHIPPING.discard)
+        return False
+
+    async def _finish(self, report: dict | None) -> None:
         try:
-            async with self._lock:
-                await asyncio.to_thread(self._session.close)
+            await asyncio.to_thread(self._s._ship, report)
         except Exception as e:
-            log.warning("ArmorIQ close failed: %s", type(e).__name__)
+            log.warning("ArmorIQ flush failed: %s", type(e).__name__)
+        finally:
+            self._s._lock.release()
+
+    async def check(self, tool: str, args: dict, user_email: str | None = None) -> Check:
+        return await asyncio.to_thread(self._s._check, tool, args, user_email)
+
+    def report(self, tool: str, args: dict, result: object, ok: bool = True,
+               error: str | None = None, ms: float | None = None, delegated: bool = False) -> None:
+        """The tool run, shipped with this turn's flush when the block exits."""
+        self._report = {"tool": tool, "args": args, "result": result, "ok": ok, "error": error,
+                        "ms": ms, "delegated": delegated}
 
 
 class ArmorIQLayer:

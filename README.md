@@ -84,7 +84,7 @@ bash backend/scripts/dev.sh        # MCP server on 127.0.0.1:8001, backend on 12
 Tests:
 ```bash
 cd mcp_server && uv run pytest     # 9 passed
-cd backend && uv run pytest        # 78 passed
+cd backend && uv run pytest        # 83 passed
 ```
 
 The six beats against any backend (local or the deployed one):

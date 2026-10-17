@@ -860,3 +860,39 @@ Console gaps (theirs, not fixable from our side):
 ### Left over
 
 - One hold from an early edge probe (`0ab79f94…`, issue_payout $100.5/$350, a throwaway counter email) was not rejected. I only have the id prefix, and the API has no list route. Every other delegation from this section is rejected or executed.
+
+## review fixes (2026-10-17, Greptile on PR #1)
+
+- **Telemetry threads.** Each ArmorIQ session starts an SDK shipper thread; only owner reset closed them. Now the page sends `POST /api/session/end` on `pagehide`, and a new session ends any conversation idle for 30 min. A session with a hold waiting (or being approved) closes once the owner decides.
+- **One turn per call.** A flush ends the console's current trace, so another call's flush between a check and its report split the call. Each tool call (and each approval) now runs in `ArmorIQSession.turn()`: check, tool run, report, flush, with the session to itself. The report and flush still ship after the response.
+- **Non-finite amounts.** `"NaN"`, `"Infinity"`, `"1e309"` passed the positive-amount rule and then crashed `int()` (HTTP 500). `rules.num()` now returns None for them, so the shop rule refuses them.
+- **Matrix script.** Every line has an expected result and prints ok/FAIL; exit code 1 on any FAIL; cleanup runs in `finally` and keeps going past a failed reject.
+
+`cd backend && uv run pytest`: 83 passed.
+
+Matrix, live workspace (`uv run python scripts/armoriq_matrix.py`, tail):
+```
+  hold                       issue_refund                150 -> hold  hold:issue_refund#1                  deleg=efd33efd 284ms  ok
+  approve efd33efd -> 403 {"message":"You cannot approve your own delegation request — it must be approved by another member.","error":"  ok
+cleanup
+  reject efd33efd -> 201 ...  ok
+  reject 21a48442 -> 201 ...  ok
+  reject 0fbfa3a2 -> 201 ...  ok
+  reject 8b58bb54 -> 201 ...  ok
+  reject e3b21e84 -> 201 ...  ok
+pending left: 0
+ALL OK
+exit=0
+```
+Matrix with a probe that raises and a reject that fails (offline, injected):
+```
+probe raised RuntimeError: probe died
+cleanup
+  reject 00000000 -> ConnectionError  FAIL
+pending left: 1
+3 FAILED: probes ran; cleanup reject 00000000; pending left
+exit=1
+```
+Local stack with real ArmorIQ (backend :8100, MCP :8101), `scripts/beats.py`: ALL BEATS PASS (B1–B6).
+Backend threads: 7 at rest, 10 after three new sessions, 7 after `/api/session/end` on each.
+`issue_payout` with `"NaN"` / `"1e309"`: `SHOP_RULE refused amount must be a positive number` (HTTP 200).

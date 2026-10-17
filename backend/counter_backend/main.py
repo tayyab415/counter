@@ -44,6 +44,10 @@ class ToolBody(BaseModel):
     customer_said: str | None = None
 
 
+class EndBody(BaseModel):
+    session_id: str
+
+
 class UsageBody(BaseModel):
     session_id: str
     input_tokens: int = Field(default=0, ge=0, le=2_000_000)
@@ -132,6 +136,7 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
             owner_token = secrets.token_urlsafe(32)
         else:
             raise HTTPException(status_code=400, detail="role must be 'counter' or 'owner'")
+        gate.expire_idle()
         try:
             armor_session = await armor.start_session(identity)
         except Exception as e:
@@ -154,6 +159,15 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
         if owner_token:
             payload["owner_token"] = owner_token
         return payload
+
+    @app.post("/api/session/end")
+    async def api_session_end(body: EndBody):
+        """The page is closing: end the call so its ArmorIQ session closes."""
+        session = store.sessions.get(body.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        gate.end_session(session)
+        return {"ok": True}
 
     # ------------------------------------------------------------ tool call
     @app.post("/api/tool")
