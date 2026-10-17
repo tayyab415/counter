@@ -259,6 +259,9 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
         async def mcp_proxy(request: Request):
             auth = request.headers.get("authorization", "")
             if not secrets.compare_digest(auth.encode(), f"Bearer {settings.mcp_public_token}".encode()):
+                # header names and auth scheme only, never values
+                log.info("public /mcp 401: scheme=%r headers=%s", auth.split(" ", 1)[0] if auth else None,
+                         sorted(k for k in request.headers.keys() if k.lower() not in ("cookie",)))
                 return JSONResponse({"error": "unauthorized"}, status_code=401,
                                     headers={"WWW-Authenticate": "Bearer"})
             raw = await request.body()
