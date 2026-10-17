@@ -1,0 +1,50 @@
+{
+  "apiVersion": "armor.io/v1",
+  "kind": "Policy",
+  "metadata": {
+    "name": "counter-policy",
+    "orgId": "<ORG_ID>",
+    "targetType": "agent",
+    "targetId": "<AGENT_ID>"
+  },
+  "spec": {
+    "priority": 100,
+    "defaultEnforcementAction": "block",
+    "memberRules": {
+      "*": {
+        "allowedTools": [
+          "lookup_price",
+          "get_order",
+          "record_inspection",
+          "notify_customer_on_file",
+          "page_owner",
+          "issue_payout",
+          "issue_refund",
+          "process_exchange"
+        ],
+        "enforcementAction": "allow_log",
+        "amountThreshold": {
+          "requireApprovalAbove": 100,
+          "maxPerTransaction": 350,
+          "currency": "USD"
+        }
+      },
+      "<OWNER>": {
+        "allowedTools": [
+          "lookup_price",
+          "get_order",
+          "record_inspection",
+          "notify_customer_on_file",
+          "page_owner",
+          "issue_payout",
+          "issue_refund",
+          "process_exchange",
+          "match_competitor_quote",
+          "waive_lock_check",
+          "refund_to_account"
+        ],
+        "enforcementAction": "allow"
+      }
+    }
+  }
+}
