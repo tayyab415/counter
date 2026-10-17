@@ -30,15 +30,28 @@ ORDERS = {
 
 
 class FakeArmorSession:
-    def __init__(self, layer: "FakeArmor", email: str):
+    def __init__(self, layer: "FakeArmor", email: str, tools: list[str] | None = None):
         self.layer = layer
         self.email = email
+        self.plan: set[str] | None = set(tools) if tools else None   # None: every tool in plan
+        self.plan_id = "plan-0"
+
+    async def start_plan(self, tools: list[str], goal: str, order_id: str | None = None) -> str:
+        if self.layer.raise_on_plan:
+            raise RuntimeError("armoriq is down")
+        self.plan = set(tools)
+        self.layer.plans.append((self.email, list(tools), goal))
+        self.plan_id = f"plan-{len(self.layer.plans)}"
+        return self.plan_id
 
     async def check(self, tool: str, args: dict, user_email: str | None = None) -> Check:
         if self.layer.raise_on_check:
             raise RuntimeError("armoriq is down")
         self.layer.checks.append((tool, dict(args), user_email or self.email))
         tool = tool.removeprefix("counter__")
+        if self.plan is not None and tool not in self.plan:   # the SDK's local intent check
+            return Check(allowed=False, action="block",
+                         reason=f"tool-not-in-plan: 'counter__{tool}' was not declared in the captured plan")
         action = self.layer.rules.get(tool, self.layer.default_action)
         if tool in self.layer.approved_tools:
             return Check(allowed=True, action="allow", reason="approved_delegation")
@@ -69,6 +82,9 @@ class FakeArmor:
         self.rules: dict[str, str] = {}
         self.default_action = "allow"
         self.raise_on_check = False
+        self.raise_on_plan = False
+        self.plans: list[tuple] = []             # (email, tools, goal) for every start_plan after the first
+        self.started: list[tuple] = []           # (email, tools, goal) for start_session
         self.checks: list[tuple] = []
         self.holds: dict[str, str] = {}          # delegation_id -> tool
         self.approved_tools: set[str] = set()
@@ -79,8 +95,10 @@ class FakeArmor:
         self.usage: list[tuple] = []
         self.closed = 0
 
-    async def start_session(self, email: str) -> FakeArmorSession:
-        s = FakeArmorSession(self, email)
+    async def start_session(self, email: str, tools: list[str] | None = None,
+                            goal: str = "counter front desk") -> FakeArmorSession:
+        self.started.append((email, list(tools or []), goal))
+        s = FakeArmorSession(self, email, tools)
         self.sessions.append(s)
         return s
 

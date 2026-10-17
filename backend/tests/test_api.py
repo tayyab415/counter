@@ -29,11 +29,11 @@ async def test_counter_session(world):
     assert session.identity.startswith("counter-") and session.identity.endswith("@example.com")
     assert len(session.identity.split("@")[0]) == len("counter-") + 8
     assert body["gemini"] == {"token": "fake-ephemeral-token", "model": "gemini-3.1-flash-live-preview"}
-    assert len(body["tools"]) == 11
+    assert len(body["tools"]) == 12
     assert {t["name"] for t in body["tools"]} == {
         "lookup_price", "get_order", "record_inspection", "notify_customer_on_file", "page_owner",
         "issue_payout", "issue_refund", "process_exchange", "match_competitor_quote",
-        "waive_lock_check", "refund_to_account"}
+        "waive_lock_check", "refund_to_account", "open_case"}
     assert body["tools"][0]["parameters"]["type"] == "OBJECT"
     assert "Call the tool before you tell the customer" in body["system_prompt"]
     assert world.armor.sessions[-1].email == session.identity

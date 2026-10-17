@@ -1,4 +1,5 @@
-"""ArmorIQ gate: one session + plan per identity, checks, delegation approve/reject.
+"""ArmorIQ gate: one session per conversation, its plan (intake, then the open
+case, see cases.py), checks, delegation approve/reject.
 
 The SDK is sync; every call runs in a thread. `mode="sdk"`, policy `counter-policy`
 (armor.io/v2, `deploy/armoriq/counter-policy.v2.json`) in the ArmorTools workspace.
@@ -24,12 +25,36 @@ NEVER_COUNTER = {"match_competitor_quote", "waive_lock_check", "refund_to_accoun
 _RULE = re.compile(r"^(allow|hold|block):([a-z_.]+)#(\d+)$")
 
 
-def describe(reason: str) -> str:
-    """counter-policy rule ids in plain words, the raw id kept in brackets so it
-    matches the ArmorIQ console: "hold:process_exchange#1" ->
-    "over $100 needs the owner (hold:process_exchange#1)"."""
+DRIFT_PREFIX = "tool-not-in-plan"
+DRIFT_WORDS = "not in the plan for this case: intent drift (tool-not-in-plan)"
+
+
+def is_drift(reason: str | None) -> bool:
+    """The SDK's intent check: the tool was not declared in the captured plan."""
+    return str(reason or "").startswith(DRIFT_PREFIX)
+
+
+# armor.io/v1 policy (platform.armoriq.ai, api.armoriq.ai) answers with these
+V1_REASONS = {"amount_requires_approval": "over $100 needs the owner",
+              "amount_exceeds_max": "over $350, the counter can't",
+              "tool_not_in_allowlist": "the counter may never use this",
+              "enforcement_passed": "owner: every tool allowed"}
+
+
+def describe(reason: str, tool: str | None = None) -> str:
+    """ArmorIQ reasons in plain words, the raw reason kept in brackets so it
+    matches the ArmorIQ console. v2 rule ids ("hold:process_exchange#1" ->
+    "over $100 needs the owner (hold:process_exchange#1)") and v1 reasons
+    ("amount_requires_approval" -> "over $100 needs the owner (amount_requires_approval)").
+    `tool` lets a v1 `allow_with_logging` on a money tool read "up to $100, allowed".
+    Anything unknown comes back as the raw reason."""
+    if is_drift(reason):
+        return DRIFT_WORDS
     words = {"approved_delegation": "approved by the owner",
              "delegation_rejected": "the owner said no earlier in this conversation"}.get(reason)
+    words = words or V1_REASONS.get(reason)
+    if reason == "allow_with_logging":
+        words = "up to $100, allowed" if (tool or "").removeprefix("counter__") in MONEY_RULES else "allowed"
     m = _RULE.match(reason or "")
     if m:
         verdict, tool, variant = m.group(1), m.group(2), int(m.group(3))
@@ -75,6 +100,27 @@ class ArmorIQSession:
         return Check(allowed=bool(r.allowed), action=str(r.action), reason=str(r.reason or ""),
                      delegation_id=getattr(r, "delegation_id", None),
                      matched_policy=getattr(r, "matched_policy", None))
+
+    async def start_plan(self, tools: list[str], goal: str, order_id: str | None = None) -> str | None:
+        """Replace the plan on this same session (the console keeps one session per
+        conversation). Calls to tools outside it come back `tool-not-in-plan`."""
+        from .cases import plan_calls
+
+        plan = plan_calls(tools, order_id)
+        last: Exception | None = None
+        async with self._lock:
+            for attempt in range(2):
+                try:
+                    tok = await asyncio.to_thread(self._session.start_plan, plan, goal)
+                    self.plan_id = getattr(tok, "plan_id", None)
+                    return self.plan_id
+                except Exception as e:
+                    last = e
+                    log.warning("ArmorIQ start_plan (%s) attempt %d failed: %s", goal, attempt + 1,
+                                type(e).__name__)
+                    await asyncio.sleep(0.75 * (attempt + 1))
+        assert last is not None
+        raise last
 
     async def report(self, tool: str, args: dict, result: object, ok: bool = True,
                      error: str | None = None, ms: float | None = None, delegated: bool = False) -> None:
@@ -146,25 +192,28 @@ class ArmorIQLayer:
         self.agent_id = agent_id
         self.telemetry = telemetry
 
-    async def start_session(self, email: str) -> ArmorIQSession:
-        return await asyncio.to_thread(self._start, email)
+    async def start_session(self, email: str, tools: list[str] | None = None,
+                            goal: str = "counter front desk") -> ArmorIQSession:
+        """A session with its first plan: `tools` (default all 11)."""
+        return await asyncio.to_thread(self._start, email, tools, goal)
 
-    def _start(self, email: str) -> ArmorIQSession:
+    def _start(self, email: str, tools: list[str] | None, goal: str) -> ArmorIQSession:
         from armoriq_sdk.session import ObservabilityConfig, SessionOptions
 
-        from .tools import PLAN_ARGS, TOOL_NAMES
+        from .cases import plan_calls
+        from .tools import TOOL_NAMES
 
         trace_id = str(uuid.uuid4())
         opts = SessionOptions(mode="sdk", default_mcp_name="counter", validity_seconds=3600,
                               session_id=trace_id, llm="gemini-3.1-flash-live-preview")
         opts.observability = ObservabilityConfig(enabled=self.telemetry, endpoint=self.backend,
                                                  product="counter", agent_id=self.agent_id)
-        plan = [{"name": f"counter__{t}", "args": PLAN_ARGS[t]} for t in TOOL_NAMES]
+        plan = plan_calls(list(tools or TOOL_NAMES))
         last: Exception | None = None
         for attempt in range(2):
             try:
                 session = self._client.for_user(email).start_session(opts)
-                tok = session.start_plan(plan, goal="counter front desk")
+                tok = session.start_plan(plan, goal=goal)
                 return ArmorIQSession(session, email, plan_id=getattr(tok, "plan_id", None), trace_id=trace_id)
             except Exception as e:  # retry once: a stale rejection can fail the first plan
                 last = e

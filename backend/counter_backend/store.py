@@ -28,6 +28,8 @@ class CounterSession:
     # order_id -> serial_seen, recorded by this session's record_inspection
     inspections: dict[str, str] = field(default_factory=dict)
     case: dict = field(default_factory=lambda: {"kind": None, "order": None, "inspection": None, "outcome": None})
+    # the ArmorIQ plan in force: intake, or the case the model opened (see cases.py)
+    plan: dict | None = None
 
 
 def pending_view(p: dict) -> dict:
