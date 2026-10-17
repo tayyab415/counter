@@ -58,3 +58,16 @@ def test_policy_reasons_in_plain_words():
     assert describe("block:refund_to_account#0").startswith("the counter may never use this")
     assert describe("allow:tools.default#0").startswith("owner: every tool allowed")
     assert describe("something new") == "something new"
+
+
+async def test_gemini_usage_recorded_on_the_session(world):
+    s = world.add_session()
+    r = await world.client.post("/api/usage", json={"session_id": s.session_id, "input_tokens": 812,
+                                                     "output_tokens": 95, "cached_tokens": 0})
+    assert r.status_code == 200
+    await settle()
+    assert world.armor.usage == [("gemini-3.1-flash-live-preview", 812, 95, 0)]
+    r = await world.client.post("/api/usage", json={"session_id": "nope", "input_tokens": 1})
+    assert r.status_code == 404
+    r = await world.client.post("/api/usage", json={"session_id": s.session_id, "input_tokens": -5})
+    assert r.status_code == 422

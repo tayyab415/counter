@@ -28,7 +28,7 @@ const state = {
   micStream: null, micCtx: null, micNode: null, camStream: null, outCtx: null,
   playNodes: [], nextPlay: 0, lastAudioAt: 0,
   showMe: false, showMeTimer: null, snapTimer: null,
-  pending: null, waitTimer: null, waitStarted: 0,
+  pending: null, waitTimer: null, waitStarted: 0, usage: null,
   decisions: [], decisionIds: new Set(), case: null,
   beats: [], beatIndex: -1,
   stats: {audioIn: 0, audioOut: 0, audioMsOut: 0, frames: 0, toolCalls: 0, decisions: 0,
@@ -171,8 +171,9 @@ function onGeminiMessage(msg) {
     if (inp) appendCaption("customer", inp);
     const parts = sc.modelTurn?.parts || [];
     for (const p of parts) if (p.inlineData?.data) playPcmChunk(p.inlineData.data);
-    if (sc.turnComplete) turnComplete();
+    if (sc.turnComplete) { turnComplete(); sendUsage(); }
   }
+  if (msg.usageMetadata) state.usage = msg.usageMetadata;
   if (msg.toolCall) handleToolCall(msg.toolCall);
   if (msg.toolCallCancellation) log("tool call cancelled:", JSON.stringify(msg.toolCallCancellation.ids));
   if (msg.goAway) log("goAway:", JSON.stringify(msg.goAway));
@@ -399,6 +400,19 @@ async function callTool(name, args, opts = {}) {
       name, args, camera_on: state.cameraOn, still})});
   if (!res.ok) throw new Error(`tool POST ${res.status}`);
   return res.json();
+}
+
+// Token counts for the turn, so the ArmorIQ console can show Gemini usage next to the checks.
+function sendUsage() {
+  const u = state.usage;
+  state.usage = null;
+  if (!u || !state.sid) return;
+  const body = {session_id: state.sid, input_tokens: u.promptTokenCount || 0,
+                output_tokens: u.responseTokenCount || u.candidatesTokenCount || 0,
+                cached_tokens: u.cachedContentTokenCount || 0};
+  if (!body.input_tokens && !body.output_tokens) return;
+  fetch("api/usage", {method: "POST", headers: {"Content-Type": "application/json"},
+                      body: JSON.stringify(body)}).catch(() => {});
 }
 
 async function handleToolCall(toolCall) {

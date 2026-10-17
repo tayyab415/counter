@@ -56,6 +56,9 @@ class FakeArmorSession:
     async def flush(self):
         self.layer.flushes += 1
 
+    async def record_generation(self, model, input_tokens, output_tokens, cached_tokens=0):
+        self.layer.usage.append((model, input_tokens, output_tokens, cached_tokens))
+
     async def close(self):
         self.layer.closed += 1
 
@@ -73,6 +76,7 @@ class FakeArmor:
         self.rejected: list[tuple[str, str]] = []
         self.reports: list[tuple] = []           # (tool, args, ok, delegated) sent to the console
         self.flushes = 0
+        self.usage: list[tuple] = []
         self.closed = 0
 
     async def start_session(self, email: str) -> FakeArmorSession:

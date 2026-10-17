@@ -95,6 +95,22 @@ class ArmorIQSession:
         except Exception as e:
             log.warning("ArmorIQ report failed for %s: %s", tool, type(e).__name__)
 
+    async def record_generation(self, model: str, input_tokens: int, output_tokens: int,
+                                cached_tokens: int = 0) -> None:
+        """One Gemini turn's token counts, so the console shows usage per session."""
+        def run():
+            self._session.record_generation(model=model, input_tokens=int(input_tokens),
+                                            output_tokens=int(output_tokens),
+                                            cache_read_tokens=int(cached_tokens), cache_write_tokens=0,
+                                            prompt=None, completion=None, finish_reason="stop")
+            self._session.flush_observability()
+
+        try:
+            async with self._lock:
+                await asyncio.to_thread(run)
+        except Exception as e:
+            log.warning("ArmorIQ record_generation failed: %s", type(e).__name__)
+
     async def flush(self) -> None:
         """Ship the checks recorded so far (holds and blocks have no tool run)."""
         try:

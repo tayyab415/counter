@@ -189,6 +189,11 @@ class Gate:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def record_usage(self, session: CounterSession, input_tokens: int, output_tokens: int,
+                     cached_tokens: int = 0) -> None:
+        self._armor_task(session, "record_generation", self.settings.gemini_model, input_tokens,
+                         output_tokens, cached_tokens)
+
     async def _slack_call(self, method: str, *args) -> None:
         try:
             fn = getattr(self.slack, method)

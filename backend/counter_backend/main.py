@@ -44,6 +44,13 @@ class ToolBody(BaseModel):
     customer_said: str | None = None
 
 
+class UsageBody(BaseModel):
+    session_id: str
+    input_tokens: int = Field(default=0, ge=0, le=2_000_000)
+    output_tokens: int = Field(default=0, ge=0, le=2_000_000)
+    cached_tokens: int = Field(default=0, ge=0, le=2_000_000)
+
+
 def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=None,
                token_minter=None) -> FastAPI:
     settings = settings or Settings.from_env()
@@ -156,6 +163,16 @@ def create_app(*, settings: Settings | None = None, armor=None, mcp=None, slack=
             raise HTTPException(status_code=404, detail="unknown session")
         return await gate.handle_tool(session, body.name, body.args, body.camera_on,
                                       body.still, body.call_id, body.customer_said)
+
+    # ------------------------------------------------------------ model usage
+    @app.post("/api/usage")
+    async def api_usage(body: UsageBody):
+        """Gemini token counts for one turn, recorded on the ArmorIQ session."""
+        session = store.sessions.get(body.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        gate.record_usage(session, body.input_tokens, body.output_tokens, body.cached_tokens)
+        return {"ok": True}
 
     # ------------------------------------------------------------ pending
     @app.get("/api/pending")
