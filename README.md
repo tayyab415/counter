@@ -164,6 +164,12 @@ Next: `proxy` mode so drift is checked on ArmorIQ's side, plan args bound to the
 
 ## How it works
 
+![Counter architecture: how a call flows through the system, and how ArmorIQ guards the agent's tools](docs/architecture.png)
+
+Editable source: [`docs/architecture.excalidraw`](docs/architecture.excalidraw) (open it at excalidraw.com).
+
+The same flow as a Mermaid chart:
+
 ```mermaid
 flowchart TD
   B["Browser call screen<br/>Gemini Live, camera frames"] -->|"POST /api/tool name, args, still"| G["Backend gate (FastAPI, Cloud Run)"]
