@@ -162,6 +162,7 @@ async function connectLive(token, model, systemPrompt, tools) {
 
 function onGeminiMessage(msg) {
   if (!msg) return;
+  if (msg.usageMetadata) state.usage = msg.usageMetadata;  // arrives with turnComplete
   const sc = msg.serverContent;
   if (sc) {
     if (sc.interrupted) { stopPlayback(); log("barge-in: playback stopped"); }
@@ -173,7 +174,6 @@ function onGeminiMessage(msg) {
     for (const p of parts) if (p.inlineData?.data) playPcmChunk(p.inlineData.data);
     if (sc.turnComplete) { turnComplete(); sendUsage(); }
   }
-  if (msg.usageMetadata) state.usage = msg.usageMetadata;
   if (msg.toolCall) handleToolCall(msg.toolCall);
   if (msg.toolCallCancellation) log("tool call cancelled:", JSON.stringify(msg.toolCallCancellation.ids));
   if (msg.goAway) log("goAway:", JSON.stringify(msg.goAway));
