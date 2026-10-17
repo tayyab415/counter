@@ -126,8 +126,9 @@ async def run_mock(pw, console_lines: list[str]):
         # beat, file, chip, tool, action, extra text that must be on screen
         (0, "mock-1-block.png", "ARMORIQ BLOCK", "match_competitor_quote", "block", None),
         (1, "mock-2-refund.png", "ARMORIQ ALLOW", "issue_refund", "allow", "Refunded"),
-        (2, "mock-3-shop-rule.png", "SHOP RULE", "issue_refund", "refused", "…7QK2"),
-        (3, "mock-4-refund-to-account.png", "ARMORIQ BLOCK", "refund_to_account", "block", "already refunded"),
+        (2, "mock-3-drift.png", "ARMORIQ BLOCK", "issue_payout", "block", "intent drift"),
+        (2, "mock-3b-refund-to-account.png", "ARMORIQ BLOCK", "refund_to_account", "block", "already refunded"),
+        (3, "mock-4-shop-rule.png", "SHOP RULE", "issue_refund", "refused", "…7QK2"),
         (4, "mock-5-hold.png", "ARMORIQ HOLD", "process_exchange", "hold", "Waiting for owner"),
         (5, "mock-6-owner-claim.png", "ARMORIQ BLOCK", "match_competitor_quote", "block", None),
     ]
@@ -139,6 +140,13 @@ async def run_mock(pw, console_lines: list[str]):
         except Exception:
             fail(f"beat {i + 1}: {tool} {action} never appeared")
             break
+        if name == "mock-4-shop-rule.png":
+            # beat 3 already has a refused issue_refund ("already refunded"); wait for this call's card
+            try:
+                await page.wait_for_function(
+                    "document.querySelector('#caseCard').innerText.includes('\u2717')", timeout=60000)
+            except Exception:
+                pass
         await page.wait_for_timeout(1200)
         await shot(page, name)
         rail = await text_of(page, "#rail")
@@ -152,14 +160,15 @@ async def run_mock(pw, console_lines: list[str]):
                 fail(f"beat {i + 1}: expected {extra!r} on screen")
             else:
                 note(f"beat {i + 1}: screen shows {extra!r}")
-        if i == 2:
+        if name == "mock-4-shop-rule.png":
             case = await text_of(page, "#caseCard")
             missing = [w for w in ("Serial on order", "…4MD9", "Serial on camera", "✗") if w not in case]
             if missing:
-                fail(f"beat 3 case card missing {missing}")
+                fail(f"beat 4 case card missing {missing}")
             else:
-                note("beat 3 case card: serial on order …4MD9 vs serial on camera …7QK2 ✗")
-        if i == 4:                                   # hold: owner card, then approve            await owner.wait_for_selector('.pend:not(.resolved)', timeout=30000)
+                note("beat 4 case card: serial on order …4MD9 vs serial on camera …7QK2 ✗")
+        if i == 4:                                   # hold: owner card, then approve
+            await owner.wait_for_selector('.pend:not(.resolved)', timeout=30000)
             await owner.screenshot(path=str(SHOTS / "owner-1-pending.png"))
             note("owner sees the pending card with the still")
             still_ok = await owner.evaluate(

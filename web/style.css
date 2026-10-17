@@ -133,6 +133,7 @@ button{font-family:inherit}
 .case{flex:none;background:var(--panel2);border-radius:12px;padding:14px 16px;font-size:17px}
 .case h3{margin:0 0 10px;font-size:20px;display:flex;align-items:center;gap:10px}
 .case h3 .kind{font-weight:700}
+.case .plan{font-size:13px;color:#9fc1ff;letter-spacing:.02em;margin:-2px 0 8px;font-family:ui-monospace,Menlo,monospace}
 .case .empty{color:var(--mute);font-size:16px;line-height:1.45}
 .kv{display:flex;justify-content:space-between;gap:16px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)}
 .kv:last-child{border-bottom:0}
